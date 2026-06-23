@@ -1,0 +1,57 @@
+# ResNet101 + CBAM配置文件
+
+data:
+  datasets:
+    - type: "sipakmed"
+      path: "data/sipakmed"
+    - type: "herlev"
+      path: "data/herlev"
+  batch_size: 24
+  img_size: 224
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+model:
+  name: "resnet101_cbam"
+  num_classes: 7
+  pretrained: true
+  dropout_rate: 0.5
+  model_type: "resnet101"
+  use_attention: true
+  attention_type: "cbam"
+
+training:
+  epochs: 120
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+  min_delta: 0.001
+  early_stopping_patience: 15
+  loss_type: "focal"
+  gamma: 2.0
+  use_sampler: true
+  use_lr_warmup: true
+  scheduler_type: "cosine_warm_restarts"
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  rotation_range: 20
+  brightness_range: [0.8, 1.2]
+  contrast_range: [0.8, 1.2]
+  saturation_range: [0.8, 1.2]
+  hue_range: [-0.1, 0.1]
+  scale_range: [0.9, 1.1]
+  shear_range: 10
+  translate_range: 0.1
+  random_erasing: true
+  random_erasing_prob: 0.3
+
+paths:
+  model_save: "outputs/models"
+  log_dir: "outputs/logs"
+  result_dir: "outputs/results"
+
+classification:
+  mode: "multiclass"

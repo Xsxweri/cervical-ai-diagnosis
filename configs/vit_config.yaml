@@ -1,0 +1,46 @@
+data:
+  datasets:
+    - type: "sipakmed"
+      path: "data/sipakmed"
+    - type: "herlev"
+      path: "data/herlev"
+  batch_size: 16  # ViT模型较大，需要较小的批次大小
+  img_size: 224
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+model:
+  name: "vit"
+  num_classes: 7
+  pretrained: true
+  dropout_rate: 0.5
+  model_type: "vit"  # 指定使用Vision Transformer
+
+training:
+  epochs: 100
+  learning_rate: 0.0001  # ViT通常需要较小的学习率
+  weight_decay: 0.0001
+  patience: 15
+  min_delta: 0.001
+  early_stopping_patience: 15
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  rotation_range: 20
+  brightness_range: [0.7, 1.3]
+  contrast_range: [0.7, 1.3]
+  saturation_range: [ 0.7, 1.3]
+  hue_range: [ -0.1, 0.1 ]
+  scale_range: [ 0.9, 1.1 ]
+  shear_range: 10
+  translate_range: 0.1
+
+paths:
+  model_save: "outputs/models"
+  log_dir: "outputs/logs"
+  result_dir: "outputs/results"
+
+classification:
+  mode: "binary"  # 默认为二分类模式，可选: binary, multiclass

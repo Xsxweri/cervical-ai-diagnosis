@@ -1,0 +1,49 @@
+data:
+  datasets:
+    - type: "sipakmed"
+      path: "data/sipakmed"
+  batch_size: 32
+  img_size: 224
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+model:
+  name: "resnet50"
+  num_classes: 5
+  pretrained: true
+  dropout_rate: 0.5
+  model_type: "resnet50"  # 可选: resnet50, resnet101, efficientnet_b0, vit
+  use_attention: false  # 是否使用注意力机制
+
+training:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+  min_delta: 0.001
+  early_stopping_patience: 15
+  loss_type: "cross_entropy"  # 可选: cross_entropy, focal, weighted
+  use_sampler: false  # 是否使用平衡采样器
+  use_lr_warmup: false  # 是否使用学习率预热
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  rotation_range: 20
+  brightness_range: [0.8, 1.2]
+  contrast_range: [0.8, 1.2]
+  saturation_range: [0.8, 1.2]
+  hue_range: [-0.1, 0.1]
+  scale_range: [0.9, 1.1]
+  shear_range: 10
+  translate_range: 0.1
+
+
+paths:
+  model_save: "outputs/models"
+  log_dir: "outputs/logs"
+  result_dir: "outputs/results"
+
+classification:
+  mode: "multiclass"

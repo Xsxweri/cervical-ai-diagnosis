@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "username": "dr_zhang",
+    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword1",
+    "name": "张医生",
+    "department": "妇科",
+    "hospital": "北京协和医院"
+  },
+  {
+    "id": 2,
+    "username": "dr_wang",
+    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword2",
+    "name": "王医生",
+    "department": "病理科",
+    "hospital": "上海瑞金医院"
+  },
+  {
+    "id": 3,
+    "username": "dr_li",
+    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword3",
+    "name": "李医生",
+    "department": "检验科",
+    "hospital": "广州中山医院"
+  }
+]

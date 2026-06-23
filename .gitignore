@@ -1,0 +1,206 @@
+# 宫颈癌细胞AI诊断系统 - Git忽略配置
+# Cervical Cytology AI Diagnosis System
+
+# Python 核心
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+
+# 包管理与分发
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.whl
+pip-wheel-metadata/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE 与编辑器
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# 测试与覆盖率
+htmlcov/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# 类型检查与静态分析
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# 日志文件
+*.log
+logs/
+*.out
+*.err
+
+# 环境配置（可能包含敏感信息）
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+!.env.example
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+*.ipynb_checkpoints
+
+# PyInstaller
+*.manifest
+*.spec
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# 项目特定：深度学习模型权重（大文件）
+# 说明：模型权重通常几百MB~数GB，建议用 Git LFS 管理或单独备份
+# 模型权重文件
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pb
+*.onnx
+*.torchscript
+*.engine          # TensorRT
+*.tflite          # TensorFlow Lite
+*.mlmodel         # CoreML
+*.pkl             # Pickle 模型
+
+# 训练中间文件（不保留）
+outputs/models/latest_*
+outputs/models/epoch_*
+outputs/models/checkpoint_*
+runs/*/weights/last.pt
+runs/*/weights/epoch_*.pt
+
+# 保留最佳模型（如需用LFS管理，请取消下面注释）
+# !outputs/models/best_*.pth
+# !outputs/models/best_*.pt
+# !runs/*/weights/best.pt
+
+# 项目特定：YOLO/Ultralytics 训练输出
+runs/detect/
+runs/segment/
+runs/classify/
+runs/pose/
+!runs/.gitkeep
+
+# YOLO 缓存
+*.cache
+**/*.cache
+labels.cache
+train.cache
+val.cache
+test.cache
+
+# 项目特定：数据集（原始数据不放Git）
+# 说明：HERLEV + SIPaKMeD 约6GB，需单独下载
+data/
+!data/.gitkeep
+
+# 数据集压缩包
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# 项目特定：Web应用上传文件
+# 说明：患者医学图像，涉及隐私，绝不进Git
+uploads/
+!uploads/.gitkeep
+
+# 项目特定：评估与推理输出
+outputs/
+!outputs/.gitkeep
+
+# 评估结果文件
+**/detection_evaluation.json
+**/classification_report.json
+**/uncertainty_data.json
+**/cross_validation_results.txt
+**/summary_report.txt
+
+# 可视化输出
+**/confusion_matrix.png
+**/confusion_matrix.npy
+**/roc_curves.png
+**/training_curves_*.png
+**/prediction_result.png
+**/visualizations/
+**/grad_cam_*.png
+
+# TensorBoard 日志
+outputs/logs/
+runs/*/events.out.tfevents.*
+
+# 项目特定：WandB 实验跟踪
+wandb/
+
+# 项目特定：多中心评估临时文件
+**/multicenter_evaluation.json
+
+# 其他临时文件
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.backup
+*.old
+
+# 文档构建
+docs/_build/
+site/
+
+# 本地配置覆盖
+local_config.yaml
+local_settings.py
