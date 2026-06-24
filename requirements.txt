@@ -9,3 +9,25 @@ ultralytics>=8.0.0
 PyYAML>=6.0
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
+
+#===Agent改造增添需要===
+# FastAPI 异步服务
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+websockets>=12.0
+
+# LangChain 生态
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.20
+langgraph>=0.0.26
+
+# RAG 向量数据库
+chromadb>=0.4.0
+
+# 文档解析
+pypdf>=4.0.0
+
+# 前端（React用，可选）
+# node 环境单独管理
