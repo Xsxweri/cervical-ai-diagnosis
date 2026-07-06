@@ -158,7 +158,7 @@ class CellAnalyzer:
 
         # 显示图像和轮廓
         ax1.imshow(image)
-        ax1.set_title('Cell with Nucleus (blue) and Cytoplasm (green)')
+        ax1.set_title('细胞核（蓝色）和细胞质（绿色）')
         ax1.axis('off')
 
         # 显示特征
@@ -171,3 +171,65 @@ class CellAnalyzer:
 
         plt.tight_layout()
         return fig
+
+
+def analyze_cell_morphology(image):
+    """
+    独立的细胞形态学分析函数（供 vision_service 调用）
+    Args:
+        image: OpenCV格式的图像 (numpy array)
+
+    Returns:
+        dict: 形态学特征字典
+    """
+    analyzer = CellAnalyzer()
+
+    # 如果输入是PIL Image，转换为OpenCV格式
+    if hasattr(image, 'convert'):
+        from PIL import Image
+        image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+    try:
+        # 自动检测细胞核
+        nucleus_contour = analyzer._detect_nucleus(image)
+
+        # 自动检测细胞质
+        cytoplasm_contour = analyzer._detect_cytoplasm(image, nucleus_contour)
+
+        # 提取特征
+        features = {}
+
+        if nucleus_contour is not None:
+            area = analyzer._calculate_area(nucleus_contour)
+            perimeter = analyzer._calculate_perimeter(nucleus_contour)
+            circularity = analyzer._calculate_circularity(nucleus_contour)
+
+            features['area'] = area
+            features['perimeter'] = perimeter
+            features['circularity'] = circularity
+
+            # 计算核质比
+            if cytoplasm_contour is not None:
+                cytoplasmic_area = analyzer._calculate_area(cytoplasm_contour)
+                if cytoplasmic_area > 0:
+                    features['nc_ratio'] = area / cytoplasmic_area
+                else:
+                    features['nc_ratio'] = 0
+            else:
+                features['nc_ratio'] = 0
+        else:
+            features['area'] = 0
+            features['perimeter'] = 0
+            features['circularity'] = 0
+            features['nc_ratio'] = 0
+
+        return features
+
+    except Exception as e:
+        # 如果分析失败，返回默认值
+        return {
+            'area': 0,
+            'perimeter': 0,
+            'circularity': 0,
+            'nc_ratio': 0
+        }
