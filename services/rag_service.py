@@ -1,9 +1,11 @@
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 import os
+import torch
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # 定义知识库类
 class MedicalKnowledgeBase:
@@ -12,9 +14,10 @@ class MedicalKnowledgeBase:
     该知识库包含了各种医学文献、指南、病例分析等内容，支持基于检索增强生成（RAG）的问答和诊断流程。
     """
     def __init__(self, persist_dir="./knowledge_db"):
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            api_key=os.getenv("OPENAI_API_KEY")
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-m3",
+            model_kwargs={'device': device},
+            encode_kwargs={'normalize_embeddings': True} 
         )
         self.persist_dir = persist_dir
 
@@ -50,11 +53,16 @@ class MedicalKnowledgeBase:
         chunks = text_splitter.split_documents(documents)
 
         # 构建向量库
-        self.vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=self.embeddings,
-            persist_directory=self.persist_dir
-        )
+        if self.vectorstore is None:
+            self.vectorstore = Chroma.from_documents(
+                documents=chunks,
+                embedding=self.embeddings,
+                persist_directory=self.persist_dir
+            )
+        else:
+            # 如果库已存在，直接追加文档
+            self.vectorstore.add_documents(chunks)
+            self.vectorstore.persist()
         # self.vectorstore.persist()
 
         return len(chunks)
@@ -95,7 +103,7 @@ class MedicalKnowledgeBase:
             # 成熟度分层
             "im_Superficial-Intermediate": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
         }
-        query = query_map.get(classification, classification)
+        query = query_map.get(classification)
         if query is None:
             # 未知分类直接使用原始标签作为查询，避免静默回退到无意义字符串
             print(f"未知分类 '{classification}'，使用原始标签检索")

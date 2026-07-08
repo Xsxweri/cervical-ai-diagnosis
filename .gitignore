@@ -205,8 +205,6 @@ site/
 local_config.yaml
 local_settings.py
 
-宫颈癌细胞学AI诊断系统_Agent化改造技术方案_v2.md
-
 # Agent v2.0 新增
 # 向量数据库（运行时生成）
 knowledge_db/
@@ -219,3 +217,5 @@ frontend/dist/
 
 # 环境变量（包含API密钥）
 .env.agent
+
+宫颈癌细胞AI诊断系统_Agent化改造技术方案_v2.md

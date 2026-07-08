@@ -156,7 +156,7 @@ class ConversationManager:
         llm = get_llm()
 
         # 2. 构建带有时空上下文的 Prompt
-        # 如果传入了 time_location，则使用传入的值，否则使用默认值（为了兼容旧调用）
+        # 如果传入了 time_location，则使用传入的值，否则使用默认值（兼容旧调用）
         ctx_time_location = time_location or f"<time_location>\n当前时间：未知\n当前地点：未知\n</time_location>"
 
         # 提取诊断报告摘要（防止上下文过长）
