@@ -18,10 +18,10 @@ load_dotenv()
 # LLM
 def get_llm():
     return ChatOpenAI(
-        model="Qwen/Qwen3-VL-8B-Instruct",
+        model=os.getenv("LLM_MODEL_ID"),
         temperature=0.3,
         api_key=os.getenv("OPENAI_API_KEY"),
-        base_url='https://api-inference.modelscope.cn/v1',
+        base_url=os.getenv("LLM_BASE_URL"),
         timeout=30.0
     )
 
@@ -295,6 +295,20 @@ def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
 # ====节点7、构建状态机图====
 kb = MedicalKnowledgeBase(persist_dir="./knowledge_db")
+
+import glob
+pdf_dir = "./Cervical_cytology"
+pdf_files = glob.glob(f"{pdf_dir}/*.pdf")
+if pdf_files:
+    print(f"[RAG] 发现 {len(pdf_files)} 篇医学文献，正在构建知识库...")
+    try:
+        chunk_count = kb.load_documents(pdf_files)
+        print(f"[RAG] 知识库构建完成，共 {chunk_count} 个文本块")
+    except Exception as e:
+        print(f"[RAG] 知识库加载失败: {e}")
+else:
+    print(f"[RAG] 未在 {pdf_dir}/ 中找到 PDF 文献，RAG 检索将返回空结果")
+
 builder = StateGraph(DiagnosisState)
 
 # 添加节点

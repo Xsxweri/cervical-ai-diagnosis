@@ -63,7 +63,6 @@ class MedicalKnowledgeBase:
             # 如果库已存在，直接追加文档
             self.vectorstore.add_documents(chunks)
             self.vectorstore.persist()
-        # self.vectorstore.persist()
 
         return len(chunks)
 
@@ -93,8 +92,8 @@ class MedicalKnowledgeBase:
 
             # ===形态学特征，细粒度亚型（按病理意义分组）===
             # 感染/反应性改变
-            "im_Dyskeratotic": "挖空细胞 HPV感染相关细胞学特征 LSIL诊断标准",
-            "im_Koilocytotic": "角化不良细胞 非典型角化 鉴别HSIL与反应性改变",
+            "im_Dyskeratotic": "角化不良细胞 HPV感染相关细胞学特征 LSIL诊断标准",
+            "im_Koilocytotic": "挖空细胞 非典型角化 鉴别HSIL与反应性改变",
 
             # 化生/良性变异
             "im_Metaplastic": "鳞状化生细胞 移行区细胞特征 与HSIL鉴别要点",

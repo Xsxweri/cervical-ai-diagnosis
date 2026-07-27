@@ -31,7 +31,6 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "cervical-train=scripts.train:main",
             "cervical-evaluate=scripts.evaluate:main",
             "cervical-predict=scripts.predict:main",
         ],

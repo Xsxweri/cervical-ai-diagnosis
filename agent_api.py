@@ -9,6 +9,19 @@ import os
 
 from Agents.conversation import ConversationManager
 from services.vision_service import analyze_image_from_path
+import io
+import zipfile
+from typing import List
+from PIL import Image
+
+from services.vision_service import (
+    analyze_pil_image,          # 核心分析函数
+    DEVICE, YOLO_WEIGHTS,       # 配置常量
+    BINARY_WEIGHTS, MULTI_WEIGHTS,
+    MC_DROPOUT_SAMPLES,
+    UNCERTAINTY_THRESHOLD,
+    ABNORMAL_CONF_THRESHOLD,
+)
 
 class FollowUpRequest(PydanticBaseModel):
     session_id: str
@@ -47,10 +60,75 @@ app = FastAPI(title="AI Agent宫颈病理诊断系统 v2.0", version="2.0")
 # 3. 收紧 CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://your-hospital-domain.com"],  # 仅允许白名单
+    allow_origins= os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","), # 仅允许白名单
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# === FastAPI 接口 ===
+@app.post("/analyze", summary="单张图片双模型分析")
+async def analyze_image(file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+        return analyze_pil_image(image)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"图像处理失败: {e}")
+
+
+@app.post("/analyze_batch", summary="多张图片批量分析")
+async def analyze_batch(files: List[UploadFile] = File(...)):
+    results = {}
+    for file in files:
+        try:
+            data = await file.read()
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+            results[file.filename] = analyze_pil_image(image)
+        except Exception as e:
+            results[file.filename] = {"出错": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+    return results
+
+
+@app.post("/analyze_zip", summary="ZIP压缩包批量分析")
+async def analyze_zip(upload_file: UploadFile = File(...)):
+    if not upload_file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="仅接受.zip文件")
+    results = {}
+    try:
+        zip_bytes = await upload_file.read()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            valid_ext = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
+            filenames = [f for f in z.namelist() if f.lower().endswith(valid_ext)]
+            if not filenames:
+                raise HTTPException(status_code=400, detail="ZIP中找不到有效的图片")
+            for filename in filenames:
+                try:
+                    with z.open(filename) as img_file:
+                        image = Image.open(io.BytesIO(img_file.read())).convert("RGB")
+                    results[filename] = analyze_pil_image(image)
+                except Exception as e:
+                    results[filename] = {"错误": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="无效的ZIP文件")
+    return results
+
+
+@app.get("/health", summary="健康检查")
+async def health_check():
+    return {
+        "status": "ok",
+        "device": str(DEVICE),
+        "models": {
+            "yolo": YOLO_WEIGHTS,
+            "二分类": BINARY_WEIGHTS,
+            "多分类": MULTI_WEIGHTS
+        },
+        "config": {
+            "mc_dropout_samples": MC_DROPOUT_SAMPLES,
+            "不确定阈值": UNCERTAINTY_THRESHOLD,
+            "异常的CONF阈值": ABNORMAL_CONF_THRESHOLD
+        }
+    }
 
 # --- 新增：FastAPI 路由 ---
 @app.post("/api/agent/followup")
@@ -77,7 +155,23 @@ async def agent_followup(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 4. 优化后的上传接口 (建议后续升级为 Celery 异步任务)
+@app.post("/api/agent/clarify/{session_id}")
+async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: ConversationManager = Depends(get_conversation_manager)):
+    """
+    处理用户对诊断报告的澄清请求。
+    """
+    user_input = body.get("user_input", "")
+    if not user_input:
+        raise HTTPException(status_code=400, detail="缺少 user_input 字段")
+    result = conv_manager.process_clarification(session_id, user_input)
+    return {
+        "session_id": session_id,
+        "status": "complete" if result["is_complete"] else "awaiting_clarification",
+        "report": result.get("diagnosis_report"),
+        "questions": result.get("clarification_questions"),
+    }
+
+# 4. 优化后的上传接口
 @app.post("/api/agent/upload")
 async def agent_upload(
         file: UploadFile = File(...),
@@ -134,3 +228,7 @@ async def agent_websocket(websocket: WebSocket, session_id: str):
     except Exception as e:
         await manager.send_progress(session_id, {"type": "error", "message": str(e)})
         manager.disconnect(session_id)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("agent_api:app", host="0.0.0.0", port=8000, reload=True)

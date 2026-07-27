@@ -6,7 +6,6 @@ import logging
 from typing import List, Dict, Any,Tuple,Optional
 from enum import Enum
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
 from PIL import Image
 import numpy as np
 import torch
@@ -19,17 +18,13 @@ from utils.cell_analyzer import analyze_cell_morphology
 
 """
 封装说明:
-- 在模块初始化时加载检测模型(YOLO)和分类模型(ResNet50变体)
 - 提供同步函数 `analyze_image_from_path(file_path)` 供内部调用
-- 提供 FastAPI 接口 `/analyze` (单张) 和 `/analyze_batch` (多张/ZIP)
+- 提供 `analyze_pil_image(image)` 供 FastAPI 主服务 agent_api.py 调用
 - 提供 MC Dropout 不确定性估计 (只激活 Dropout 层)
 - 封装形态学分析 Tool (依赖 utils.cell_analyzer.analyze_cell_morphology)
 """
 # Logger 配置 (移除 basicConfig，避免与主程序冲突)
 logger = logging.getLogger("vision_service")
-
-#FastAPI 实例
-app = FastAPI(title="宫颈细胞检查服务", version="3.0.0")
 
 #配置项(支持环境变量覆盖)
 YOLO_WEIGHTS = os.getenv("YOLO_WEIGHTS", "runs/detect/cervical_cell_exp4/weights/best.pt")
@@ -53,9 +48,9 @@ class DualModelManager:
     """统一管理模型(YOLO + 二分类 + 多分类)"""
 
     def __init__(self):
-        self.detecter: Optional[YOLO] = None
+        self.detector: Optional[YOLO] = None
         self.binary_classifier: Optional[CervicalCancerModel] = None
-        self.multiclass_classifier: Optional[CervicalCancerModel] = None
+        self.multi_classifier: Optional[CervicalCancerModel] = None
         self._load_all()
 
     def _load_all(self):
@@ -121,7 +116,13 @@ class DualModelManager:
 
 
 #全局模型管理器实例
-model_manager = DualModelManager()
+model_manager: Optional[DualModelManager] = None
+
+def get_model_manager() -> DualModelManager:
+    global model_manager
+    if model_manager is None:
+        model_manager = DualModelManager()
+    return model_manager
 
 # === 预处理 & MC Dropout ===
 def preprocess_image_pil(image: Image.Image, mode: str = "eval") -> torch.Tensor:
@@ -317,69 +318,3 @@ def analyze_case_folder(folder_path: str, pattern: str = "*.jpg", **kwargs) -> D
         results[filename] = analyze_image_from_path(path, **kwargs)
     return results
 
-
-
-# === FastAPI 接口 ===
-@app.post("/analyze", summary="单张图片双模型分析")
-async def analyze_image(file: UploadFile = File(...)):
-    try:
-        data = await file.read()
-        image = Image.open(io.BytesIO(data)).convert("RGB")
-        return analyze_pil_image(image)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"图像处理失败: {e}")
-
-
-@app.post("/analyze_batch", summary="多张图片批量分析")
-async def analyze_batch(files: List[UploadFile] = File(...)):
-    results = {}
-    for file in files:
-        try:
-            data = await file.read()
-            image = Image.open(io.BytesIO(data)).convert("RGB")
-            results[file.filename] = analyze_pil_image(image)
-        except Exception as e:
-            results[file.filename] = {"出错": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
-    return results
-
-
-@app.post("/analyze_zip", summary="ZIP压缩包批量分析")
-async def analyze_zip(upload_file: UploadFile = File(...)):
-    if not upload_file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="仅接受.zip文件")
-    results = {}
-    try:
-        zip_bytes = await upload_file.read()
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            valid_ext = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
-            filenames = [f for f in z.namelist() if f.lower().endswith(valid_ext)]
-            if not filenames:
-                raise HTTPException(status_code=400, detail="ZIP中找不到有效的图片")
-            for filename in filenames:
-                try:
-                    with z.open(filename) as img_file:
-                        image = Image.open(io.BytesIO(img_file.read())).convert("RGB")
-                    results[filename] = analyze_pil_image(image)
-                except Exception as e:
-                    results[filename] = {"错误": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="无效的ZIP文件")
-    return results
-
-
-@app.get("/health", summary="健康检查")
-async def health_check():
-    return {
-        "status": "ok",
-        "device": str(DEVICE),
-        "models": {
-            "yolo": YOLO_WEIGHTS,
-            "二分类": BINARY_WEIGHTS,
-            "多分类": MULTI_WEIGHTS
-        },
-        "config": {
-            "mc_dropout_samples": MC_DROPOUT_SAMPLES,
-            "不确定阈值": UNCERTAINTY_THRESHOLD,
-            "异常的CONF阈值": ABNORMAL_CONF_THRESHOLD
-        }
-    }

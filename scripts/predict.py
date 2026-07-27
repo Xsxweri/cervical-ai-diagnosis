@@ -7,8 +7,11 @@ import argparse
 import os
 from PIL import Image
 
-from models import CervicalCancerModel
-from utils import load_config, visualize_prediction
+# from models import CervicalCancerModel
+# from utils import load_config, visualize_prediction
+from models.cer_cancer_model import CervicalCancerModel
+from utils.preprocess import load_config
+from utils.visualization import visualize_prediction
 
 
 def predict_image(model, image_path, device, config):

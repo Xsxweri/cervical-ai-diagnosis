@@ -114,6 +114,10 @@ desktop.ini
 *.mlmodel         # CoreML
 *.pkl             # Pickle 模型
 
+# 医学文献和指南
+Cervical_cytology/
+*.pdf
+
 # 训练中间文件（不保留）
 outputs/models/latest_*
 outputs/models/epoch_*
