@@ -540,4 +540,3 @@ python scripts/realtime_predict.py \
 ## 📞 联系方式
 
 - 项目地址: [https://github.com/Xsxweri/cervical-ai-diagnosis](https://github.com/Xsxweri/cervical-ai-diagnosis)
-- 邮箱: contact@example.com
