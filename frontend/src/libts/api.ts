@@ -1,0 +1,86 @@
+import axios from 'axios';
+import type { AgentResponse, CVResult, FollowUpResponse, HealthResponse } from '../types';
+
+export const API_BASE: string =
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000';
+export const WS_BASE: string =
+  (import.meta.env.VITE_WS_BASE as string | undefined) ?? 'ws://localhost:8000';
+
+const http = axios.create({ baseURL: API_BASE, timeout: 120_000 });
+
+/** 健康检查 */
+export async function fetchHealth(): Promise<HealthResponse> {
+  const { data } = await http.get<HealthResponse>('/health');
+  return data;
+}
+
+/** 单张图片快速分析 */
+export async function analyzeImage(file: File): Promise<CVResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await http.post<CVResult>('/analyze', fd);
+  return data;
+}
+
+/** 多张图片批量分析 */
+export async function analyzeBatch(files: File[]): Promise<Record<string, CVResult>> {
+  const fd = new FormData();
+  files.forEach((f) => fd.append('files', f));
+  const { data } = await http.post<Record<string, CVResult>>('/analyze_batch', fd);
+  return data;
+}
+
+/** ZIP 压缩包批量分析 */
+export async function analyzeZip(file: File): Promise<Record<string, CVResult>> {
+  const fd = new FormData();
+  fd.append('upload_file', file);
+  const { data } = await http.post<Record<string, CVResult>>('/analyze_zip', fd);
+  return data;
+}
+
+/** Agent：上传图像并启动诊断 */
+export async function agentUpload(file: File): Promise<AgentResponse> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await http.post<AgentResponse>('/api/agent/upload', fd);
+  return data;
+}
+
+/** Agent：提交澄清回答 */
+export async function agentClarify(sessionId: string, userInput: string): Promise<AgentResponse> {
+  const { data } = await http.post<AgentResponse>(`/api/agent/clarify/${sessionId}`, {
+    user_input: userInput,
+  });
+  return data;
+}
+
+/** Agent：HTTP 追问（WebSocket 不可用时降级） */
+export async function agentFollowUp(sessionId: string, message: string): Promise<string> {
+  const { data } = await http.post<FollowUpResponse>('/api/agent/followup', {
+    session_id: sessionId,
+    message,
+  });
+  return data.response;
+}
+
+export interface WSOptions {
+  onStream: (content: string) => void;
+  onComplete?: () => void;
+  onError?: (message: string) => void;
+}
+
+/** 建立 Agent WebSocket 会话 */
+export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
+  const ws = new WebSocket(`${WS_BASE}/ws/agent/chat/${sessionId}`);
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data) as { type: string; content?: string; message?: string };
+      if (msg.type === 'stream' && msg.content) opts.onStream(msg.content);
+      else if (msg.type === 'complete') opts.onComplete?.();
+      else if (msg.type === 'error') opts.onError?.(msg.message ?? '未知错误');
+    } catch {
+      /* 忽略非 JSON 消息 */
+    }
+  };
+  return ws;
+}

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import AgentDiagnosis from './components/AgentDiagnosis';
-import './App.css';
 
 function App() {
   return (
