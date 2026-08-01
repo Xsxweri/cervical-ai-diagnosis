@@ -60,7 +60,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className="card p-3 flex items-start gap-2.5 animate-fade-in shadow-lg border-gray-200"
+            className="relative card p-3 flex items-start gap-2.5 animate-fade-in shadow-lg border-gray-200"
           >
             {ICONS[t.type]}
             <p className="flex-1 text-sm text-gray-700 leading-snug break-words">{t.message}</p>

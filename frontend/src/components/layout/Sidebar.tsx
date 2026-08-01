@@ -73,7 +73,7 @@ export default function Sidebar({ open, onClose }: Props) {
                 }`
               }
             >
-              <Icon size={18} className={({}) => ''} />
+              <Icon size={18} />
               <span>{label}</span>
             </NavLink>
           ))}

@@ -59,3 +59,10 @@ export function formatTime(ts: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+export function riskFromText(text: string): RiskLevel {
+  if (/紧急|立即就诊|急诊|高危/.test(text)) return 'emergency';
+  if (/高风|高度怀疑|HSIL|CIN ?2|CIN ?3|癌/.test(text)) return 'high';
+  if (/中风险|ASC-US|LSIL|低度|CIN ?1|可疑/.test(text)) return 'medium';
+  return 'low';
+}
