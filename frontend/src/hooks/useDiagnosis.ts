@@ -119,6 +119,15 @@ export function useDiagnosis() {
     [sessionId, finishReport, pushMessage]
   );
 
+  /** 报告页 → 进入医生追问模式（补连 WS 若未连接） */
+  const startChat = useCallback(() => {
+    if (!sessionId) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWS(sessionId);
+    }
+    setStep('chat');
+  }, [sessionId, connectWS]);
+
   const sendMessage = useCallback(
     async (input: string) => {
       if (!sessionId) return;
@@ -162,6 +171,7 @@ export function useDiagnosis() {
     isLoading,
     start,
     submitClarification,
+    startChat,
     sendMessage,
     reset,
   };

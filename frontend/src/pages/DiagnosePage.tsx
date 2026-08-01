@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, AlertTriangle, Sparkles, RotateCcw, MessageSquareText } from 'lucide-react';
+import { Send, AlertTriangle, Sparkles, RotateCcw, MessageSquareText, MessageCircle } from 'lucide-react';
 import { useDiagnosis, type ChatMessage } from '../hooks/useDiagnosis';
 import { riskFromText, formatTime } from '../libts/format';
 import type { RiskLevel } from '../types';
@@ -13,7 +13,10 @@ export default function DiagnosePage() {
   const diag = useDiagnosis();
   const [file, setFile] = useState<File | null>(null);
   const stepIndex =
-    diag.step === 'upload' ? 0 : diag.step === 'analyzing' ? 1 : diag.step === 'clarification' ? 1 : diag.step === 'report' ? 2 : 3;
+    diag.step === 'upload' ? 0
+    : diag.step === 'analyzing' || diag.step === 'clarification' ? 1
+    : diag.step === 'report' ? 2
+    : 3;
 
   return (
     <div className="space-y-6">
@@ -45,17 +48,15 @@ export default function DiagnosePage() {
       </div>
 
       {diag.step === 'upload' && (
-        <UploadStep
-          file={file}
-          onFileChange={setFile}
-          onStart={() => file && diag.start(file)}
-        />
+        <UploadStep file={file} onFileChange={setFile} onStart={() => file && diag.start(file)} />
       )}
       {diag.step === 'analyzing' && <AnalyzingStep />}
       {diag.step === 'clarification' && (
         <ClarificationStep questions={diag.questions} loading={diag.isLoading} onSubmit={diag.submitClarification} />
       )}
-      {diag.step === 'report' && <ReportStep report={diag.report} onChat={() => {}} onReset={diag.reset} />}
+      {diag.step === 'report' && (
+        <ReportStep report={diag.report} onChat={diag.startChat} onReset={diag.reset} />
+      )}
       {diag.step === 'chat' && <ChatStep messages={diag.messages} onSend={diag.sendMessage} onReset={diag.reset} />}
     </div>
   );
@@ -75,11 +76,13 @@ function UploadStep({
     <div className="max-w-2xl mx-auto space-y-5 animate-fade-in">
       <ImageDropzone onFile={(f) => onFileChange(f)} />
       <div className="flex items-center justify-between gap-3">
-        {file && (
+        {file ? (
           <p className="text-sm text-gray-500 truncate">
             已选择：<span className="font-medium text-gray-700">{file.name}</span>
             <span className="ml-2 text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
           </p>
+        ) : (
+          <span />
         )}
         <button className="btn-primary ml-auto" disabled={!file} onClick={onStart}>
           <Sparkles size={16} /> 开始 AI 诊断
@@ -192,15 +195,28 @@ function ClarificationStep({
         disabled={!valid || loading}
         onClick={() => onSubmit(answers)}
       >
-        {loading ? <Spinner size={16} /> : '提交并重新诊断'}
-        {!loading && '提交并重新诊断'}
+        {loading ? (
+          <Spinner size={16} />
+        ) : (
+          <>
+            <Sparkles size={16} /> 提交并重新诊断
+          </>
+        )}
       </button>
     </div>
   );
 }
 
 /* ---------- 报告步骤 ---------- */
-function ReportStep({ report, onReset }: { report: string; onReset: () => void }) {
+function ReportStep({
+  report,
+  onChat,
+  onReset,
+}: {
+  report: string;
+  onChat: () => void;
+  onReset: () => void;
+}) {
   const risk: RiskLevel = riskFromText(report);
   return (
     <div className="max-w-3xl mx-auto space-y-5 animate-fade-in">
@@ -213,7 +229,10 @@ function ReportStep({ report, onReset }: { report: string; onReset: () => void }
           {report}
         </div>
       </div>
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
+        <button className="btn-primary" onClick={onChat}>
+          <MessageCircle size={16} /> 进入医生追问模式
+        </button>
         <button className="btn-secondary" onClick={onReset}>
           <RotateCcw size={16} /> 重新诊断
         </button>
@@ -271,11 +290,7 @@ function ChatStep({
                   : 'bg-white border border-gray-200 text-gray-800'
               }`}
             >
-              {msg.type === 'report' || msg.role === 'user' || msg.role === 'system' ? (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-              ) : (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-              )}
+              <div className="whitespace-pre-wrap">{msg.content}</div>
               <div className={`mt-1 text-[10px] ${msg.role === 'user' ? 'text-primary-200' : 'text-gray-400'}`}>
                 {formatTime(msg.time)}
               </div>

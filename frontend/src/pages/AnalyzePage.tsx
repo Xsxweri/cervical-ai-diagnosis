@@ -1,5 +1,15 @@
 import { useRef, useState } from 'react';
-import { ScanSearch, FileArchive, Images, Play, X, ChevronDown } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  FileArchive,
+  Gauge,
+  Images,
+  Play,
+  ScanSearch,
+  Tag,
+  X,
+} from 'lucide-react';
 import { analyzeBatch, analyzeImage, analyzeZip } from '../libts/api';
 import { addHistory } from '../libts/storage';
 import { calcRisk, classLabel, pct } from '../libts/format';
@@ -11,7 +21,6 @@ import UncertaintyBadge from '../components/ui/UncertaintyBadge';
 import Spinner from '../components/ui/Spinner';
 import ProbabilityBar from '../components/ui/ProbabilityBar';
 import { useToast } from '../components/ui/Toast';
-import { AlertTriangle as AlertIcon, Gauge as GaugeIcon, Tag as TagIcon } from 'lucide-react';
 
 type Mode = 'single' | 'batch' | 'zip';
 
@@ -50,7 +59,6 @@ export default function AnalyzePage() {
         out = await analyzeZip(files[0]);
       }
       setResults(out);
-      // 保存历史
       const first = Object.values(out)[0];
       if (first && first.total_cells > 0) {
         const risk = calcRisk(
@@ -148,7 +156,11 @@ export default function AnalyzePage() {
       </div>
 
       {/* 结果 */}
-      {loading && <div className="card p-10 flex justify-center"><Spinner label="模型推理中，请稍候..." /></div>}
+      {loading && (
+        <div className="card p-10 flex justify-center">
+          <Spinner label="模型推理中，请稍候..." />
+        </div>
+      )}
 
       {results && !loading && (
         <div className="space-y-5">
@@ -188,10 +200,7 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
           <p className="font-medium text-gray-800 truncate">{name}</p>
           <RiskBadge level={risk} />
         </div>
-        <button
-          className="btn-ghost text-xs shrink-0"
-          onClick={() => setOpen((v) => !v)}
-        >
+        <button className="btn-ghost text-xs shrink-0" onClick={() => setOpen((v) => !v)}>
           <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
           {open ? '收起' : '展开详情'}
         </button>
@@ -199,19 +208,16 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
         <StatCard icon={Images} label="检测细胞数" value={result.total_cells} tone="primary" />
-        <StatCard icon={AlertIcon} label="异常细胞" value={result.abnormal_cells} tone="danger" />
-        <StatCard icon={GaugeIcon} label="最大不确定性" value={pct(result.max_uncertainty)} tone="warning" />
-        <StatCard icon={TagIcon} label="最高风险类别" value={classLabel(result.highest_risk)} tone="ai" />
+        <StatCard icon={AlertTriangle} label="异常细胞" value={result.abnormal_cells} tone="danger" />
+        <StatCard icon={Gauge} label="最大不确定性" value={pct(result.max_uncertainty)} tone="warning" />
+        <StatCard icon={Tag} label="最高风险类别" value={classLabel(result.highest_risk)} tone="ai" />
       </div>
 
       {open && (
         <div className="mt-5 space-y-5">
           <CellTable cells={result.cells} />
           {result.cells.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-gray-700">各类别置信度</p>
-              <ProbabilitySection cells={result.cells} />
-            </div>
+            <ProbabilitySection cells={result.cells} />
           )}
         </div>
       )}
