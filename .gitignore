@@ -218,8 +218,10 @@ knowledge_db/
 frontend/node_modules/
 frontend/build/
 frontend/dist/
+dist/
+build/
+.vite/
+node_modules/
 
 # 环境变量（包含API密钥）
 .env.agent
-
-宫颈癌细胞AI诊断系统_Agent化改造技术方案_v2.md
