@@ -279,7 +279,7 @@ uvicorn agent_api:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 cd frontend
 npm run dev
-# 访问 http://localhost:3000
+# 访问 http://localhost:5173
 ```
 
 #### API 接口一览
@@ -304,84 +304,84 @@ Cervix-Cytology-AI-System/
 ├── setup.py                      # 项目安装脚本
 ├── requirements.txt              # Python 依赖清单
 │
-├── Agents/                       # 🤖 AI Agent 模块
-│   ├── conversation.py           #   多轮对话管理器
+├── Agents/                       # AI Agent 模块
+│   ├── conversation.py           # 多轮对话管理器
 │   ├── diagnosis_graph.py        #   LangGraph 诊断工作流
-│   └── state.py                  #   状态机数据结构定义
+│   └── state.py                  # 状态机数据结构定义
 │
-├── services/                     # ⚙️ 核心服务层
-│   ├── vision_service.py         #   CV 视觉分析服务 (YOLO + ResNet + MC Dropout)
-│   └── rag_service.py            #   RAG 医学知识检索服务
+├── services/                     # 核心服务层
+│   ├── vision_service.py         # CV 视觉分析服务 (YOLO + ResNet + MC Dropout)
+│   └── rag_service.py            # RAG 医学知识检索服务
 │
-├── models/                       # 🧬 深度学习模型定义
-│   ├── cer_cancer_model.py       #   分类模型 (ResNet/EfficientNet + SE/CBAM)
-│   ├── resnet_model.py           #   ResNet 变体封装
-│   ├── yolo_model.py             #   YOLO 检测模型封装
-│   └── train.py                  #   模型训练逻辑
+├── models/                       # 深度学习模型定义
+│   ├── cer_cancer_model.py       # 分类模型 (ResNet/EfficientNet + SE/CBAM)
+│   ├── resnet_model.py           # ResNet 变体封装
+│   ├── yolo_model.py             # YOLO 检测模型封装
+│   └── train.py                  # 模型训练逻辑
 │
-├── tools/                        # 🔧 LangGraph Agent 工具
+├── tools/                        #  LangGraph Agent 工具
 │   ├── gradcam_tool.py           #   Grad-CAM 可解释性分析工具
-│   └── morphology_tool.py        #   细胞形态学分析工具
+│   └── morphology_tool.py        # 细胞形态学分析工具
 │
-├── utils/                        # 🛠️ 工具函数库
-│   ├── data_loader.py            #   数据加载器
-│   ├── preprocess.py             #   预处理与增强
-│   ├── advanced_augmentation.py  #   MixUp/CutMix 高级增强
-│   ├── cell_analyzer.py          #   细胞形态学分析器
+├── utils/                        # 工具函数库
+│   ├── data_loader.py            # 数据加载器
+│   ├── preprocess.py             # 预处理与增强
+│   ├── advanced_augmentation.py  # MixUp/CutMix 高级增强
+│   ├── cell_analyzer.py          # 细胞形态学分析器
 │   ├── grad_cam.py               #   Grad-CAM 实现
-│   ├── visualization.py          #   可视化工具
-│   ├── wsi_processor.py          #   全切片 (WSI) 分块处理器
-│   └── yolo_processor.py         #   YOLO 数据格式处理器
+│   ├── visualization.py          # 可视化工具
+│   ├── wsi_processor.py          # 全切片 (WSI) 分块处理器
+│   └── yolo_processor.py         # YOLO 数据格式处理器
 │
-├── scripts/                      # 📜 训练/评估/工具脚本
-│   ├── train.py                  #   分类模型训练
-│   ├── train_yolo.py             #   YOLO 检测模型训练
-│   ├── evaluate.py               #   分类模型评估
-│   ├── evaluate_detection.py     #   检测模型评估
-│   ├── predict.py                #   单张图像预测
-│   ├── realtime_predict.py       #   实时预测 (优化推理速度)
-│   ├── cross_validation.py       #   K 折交叉验证
-│   ├── ensemble_predict.py       #   模型集成预测
-│   ├── model_distillation.py     #   知识蒸馏
-│   ├── optimize_model.py         #   模型量化优化
-│   └── multicenter_evaluation.py #   多中心泛化评估
+├── scripts/                      # 训练/评估/工具脚本
+│   ├── train.py                  # 分类模型训练
+│   ├── train_yolo.py             # YOLO 检测模型训练
+│   ├── evaluate.py               # 分类模型评估
+│   ├── evaluate_detection.py     # 检测模型评估
+│   ├── predict.py                # 单张图像预测
+│   ├── realtime_predict.py       # 实时预测 (优化推理速度)
+│   ├── cross_validation.py       # K 折交叉验证
+│   ├── ensemble_predict.py       # 模型集成预测
+│   ├── model_distillation.py     # 知识蒸馏
+│   ├── optimize_model.py         # 模型量化优化
+│   └── multicenter_evaluation.py # 多中心泛化评估
 │
-├── configs/                      # ⚙️ 配置文件
-│   ├── default.yaml              #   默认训练配置
+├── configs/                      # 配置文件
+│   ├── default.yaml              # 默认训练配置
 │   ├── efficientnet_config.yaml  #   EfficientNet 配置
 │   ├── resnet101_cbam_config.yaml#   ResNet101 + CBAM 配置
 │   ├── sipakmed_classifier.yaml  #   SIPaKMeD 分类配置
 │   ├── sipakmed_yolo.yaml        #   SIPaKMeD YOLO 配置
-│   ├── vit_config.yaml           #   Vision Transformer 配置
-│   └── herlev_classifier.yaml    #   HERLEV 分类配置
+│   ├── vit_config.yaml           # Vision Transformer 配置
+│   └── herlev_classifier.yaml    # HERLEV 分类配置
 │
-├── appWeb/                       # 🌐 Flask 传统 Web 界面
-│   ├── app.py                    #   Flask 主程序
-│   ├── doctor_accounts.json      #   医生账号存储
+├── appWeb/                       # Flask 传统 Web 界面
+│   ├── app.py                    # Flask 主程序
+│   ├── doctor_accounts.json      # 医生账号存储
 │   └── templates/
-│       └── tryweb.html           #   前端模板
+│       └── tryweb.html           # 前端模板
 │
-├── frontend/                     # 🌐 React 现代前端
-│   ├── package.json              #   前端依赖
-│   ├── vite.config.ts            #   Vite 构建配置
+├── frontend/                     # React 现代前端
+│   ├── package.json              # 前端依赖
+│   ├── vite.config.ts            # Vite 构建配置
 │   ├── tailwind.config.js        #   Tailwind CSS 配置
 │   ├── tsconfig.json             #   TypeScript 配置
 │   └── src/
-│       ├── App.tsx               #   主组件
-│       ├── components/           #   组件库
-│       └── assets/               #   静态资源
+│       ├── App.tsx               # 主组件
+│       ├── components/           # 组件库
+│       └── assets/               # 静态资源
 │
-├── data/                         # 📂 数据集
-│   ├── herlev/                   #   HERLEV (7 类)
+├── data/                         # 数据集
+│   ├── herlev/                   # HERLEV (7 类)
 │   └── sipakmed/                 #   SIPaKMeD (5 类 + YOLO 标签)
 │
-├── outputs/                      # 📊 训练输出
-│   ├── models/                   #   模型权重
-│   ├── results/                  #   评估结果
+├── outputs/                      # 训练输出
+│   ├── models/                   # 模型权重
+│   ├── results/                  # 评估结果
 │   └── logs/                     #   TensorBoard 日志
 │
-└── runs/                         # 📈 YOLO 训练输出
-    └── detect/                   #   YOLO 检测结果
+└── runs/                         # YOLO 训练输出
+    └── detect/                   # YOLO 检测结果
 ```
 
 ---
@@ -533,10 +533,8 @@ python scripts/realtime_predict.py \
 
 ---
 
-## 👥 贡献
+## 👥 贡献 & 📞 联系方式
 
 欢迎提交 Issue 和 Pull Request 参与项目贡献。
-
-## 📞 联系方式
 
 - 项目地址: [https://github.com/Xsxweri/cervical-ai-diagnosis](https://github.com/Xsxweri/cervical-ai-diagnosis)
