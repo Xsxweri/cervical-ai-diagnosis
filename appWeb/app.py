@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import os
-# import uuid
 import json
 from datetime import timedelta
 import sys
@@ -13,6 +12,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, '..'))
 sys.path.insert(0, project_root)
 
+from core.auth import create_token
 
 # 初始化Flask应用
 app = Flask(__name__)
@@ -25,39 +25,15 @@ app.config['ALLOWED_EXTENSIONS'] = {'jpg', 'jpeg', 'png', 'tif', 'tiff'}
 # 确保上传目录存在
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# 模拟数据库中的医生数据（在实际应用中应该使用真实数据库）
-doctors = [
-    {
-        "id": 1,
-        "username": "dr_zhang",
-        "password_hash": generate_password_hash("password123"),  # 实际密码: password123
-        "name": "张医生",
-        "department": "妇科",
-        "hospital": "北京协和医院"
-    },
-    {
-        "id": 2,
-        "username": "dr_wang",
-        "password_hash": generate_password_hash("securepwd456"),  # 实际密码: securepwd456
-        "name": "王医生",
-        "department": "病理科",
-        "hospital": "上海瑞金医院"
-    },
-    {
-        "id": 3,
-        "username": "dr_li",
-        "password_hash": generate_password_hash("secret789"),  # 实际密码: secret789
-        "name": "李医生",
-        "department": "检验科",
-        "hospital": "广州中山医院"
-    }
-]
+_ACCOUNTS_PATH = os.path.join(os.path.dirname(__file__), 'doctor_accounts.json')
 
+def _load_doctors():
+    with open(_ACCOUNTS_PATH, encoding='utf-8') as f:
+        return json.load(f)
 
 def allowed_file(filename):
     return '.' in filename and \
         filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
-
 
 @app.route('/')
 def index():
@@ -75,7 +51,7 @@ def login():
     password = data.get('password')
 
     # 查找用户
-    doctor = next((d for d in doctors if d['username'] == username), None)
+    doctor = next((d for d in _load_doctors() if d['username'] == username), None)
 
     if doctor and check_password_hash(doctor['password_hash'], password):
         # 登录成功
@@ -83,8 +59,9 @@ def login():
         session['user_id'] = doctor['id']
         session['username'] = doctor['username']
         session['doctor_name'] = doctor['name']
-        session['department'] = doctor['department']
-        session['hospital'] = doctor['hospital']
+
+        token = create_token({"sub": doctor['username'], "uid": doctor['id']})
+        session['jwt'] = token
 
         return jsonify({
             'success': True,
@@ -108,7 +85,6 @@ def dashboard():
     # 检查用户是否已登录
     if 'user_id' not in session:
         return redirect(url_for('index'))
-
     # 在实际应用中，这里可以获取更多用户数据
     return render_template('tryweb.html')
 
@@ -130,18 +106,19 @@ def upload_file():
         return jsonify({'success': False, 'message': '没有选择文件'}), 400
 
     files = request.files.getlist('files')
-
     # 检查文件数量
     if len(files) > 10:
         return jsonify({'success': False, 'message': '最多只能上传10个文件'}), 400
 
+    token = session.get('jwt_token','')
+    headers = {'Authorization': f'Bearer{token}'}
     results = []
 
     for file in files:
         filename = secure_filename(file.filename)
         if file and allowed_file(file.filename):
             files_binary = {'file': (file.filename, file.read(), file.content_type)}
-            resp = requests.post("http://localhost:8000/api/agent/upload", files=files_binary, timeout=120)
+            resp = requests.post("http://localhost:8000/api/agent/upload", files=files_binary, headers=headers,timeout=120)
             prediction = resp.json()
             results.append({
                 'filename': filename,

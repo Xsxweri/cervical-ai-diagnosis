@@ -2,7 +2,7 @@
   {
     "id": 1,
     "username": "dr_zhang",
-    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword1",
+    "password_hash": "scrypt:32768:8:1$B5iGrHSmedXctVPx$c5b43d256487bf59027eb5b874f5698c3e9d08dff4fb09f3e703e3f180f1f1d9a8646fa9456bb143f40c4c0baaa319a770ef073d4b0fb150ab72f264a0fd5cb2",
     "name": "张医生",
     "department": "妇科",
     "hospital": "北京协和医院"
@@ -10,7 +10,7 @@
   {
     "id": 2,
     "username": "dr_wang",
-    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword2",
+    "password_hash": "scrypt:32768:8:1$zEqNBs4lLW79OTnV$cb5b7f4f258eda298542f5186107d563955737ff3a2b77acd13002c3eab85804b57d71124f6f4e01c9fa8b6e643333f20c754c829f09027428ab3df2070e3efd",
     "name": "王医生",
     "department": "病理科",
     "hospital": "上海瑞金医院"
@@ -18,7 +18,7 @@
   {
     "id": 3,
     "username": "dr_li",
-    "password_hash": "pbkdf2:sha256:260000$randomsalt$hashedpassword3",
+    "password_hash": "scrypt:32768:8:1$gLYOxwGMAlTzZ1s5$3ab9bf98d92ff8043099c8579d719ff6a44b05c028047ef654a7e353644e7a9d478d431663219e6f38847217151e71252ad194e20fabaa3fda12a6add128b46f",
     "name": "李医生",
     "department": "检验科",
     "hospital": "广州中山医院"

@@ -1,9 +1,10 @@
 import io
 import os
 import glob
+import asyncio
 import zipfile
 import logging
-from typing import List, Dict, Any,Tuple,Optional
+from typing import List, Dict, Any, Tuple, Optional
 from enum import Enum
 
 from PIL import Image
@@ -195,18 +196,18 @@ class MorphologyTool:
 
 
 # === 核心双模型分析函数 ===
-def analyze_pil_image(
-    image: Image.Image,
-    conf: float = 0.25,
-    iou: float = 0.45,
-    mc_samples: int = MC_DROPOUT_SAMPLES
+def _analyze_pil_image_sync(
+        image: Image.Image,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        mc_samples: int = MC_DROPOUT_SAMPLES
 ) -> Dict[str, Any]:
     """
-    双模型级联推理:
-    1. YOLO 检测所有细胞
-    2. 二分类模型筛查每个细胞
-    3. 仅对 abnormal 细胞调用多分类模型进行细粒度分型
-    4. MC Dropout 对最终使用的模型做不确定性估计
+        双模型级联推理:
+        1. YOLO 检测所有细胞
+        2. 二分类模型筛查每个细胞
+        3. 仅对 abnormal 细胞调用多分类模型进行细粒度分型
+        4. MC Dropout 对最终使用的模型做不确定性估计
     """
     empty_result = {
         "total_cells": 0,
@@ -217,8 +218,9 @@ def analyze_pil_image(
         "needs_clarification": False,
         "error": None
     }
+    mgr = get_model_manager()
     try:
-        results = model_manager.detector(image, conf=conf, iou=iou)
+        results = mgr.detector(image, conf=conf, iou=iou)
         cells = []
         res0 = results[0]
         boxes = getattr(res0, "boxes", [])
@@ -231,23 +233,23 @@ def analyze_pil_image(
             input_tensor = preprocess_image_pil(cell_img, mode="eval").unsqueeze(0).to(DEVICE)
 
             # ---- Step 1: 二分类筛查 ----
-            bin_idx, bin_conf, bin_probs = model_manager.predict_binary(input_tensor)
+            bin_idx, bin_conf, bin_probs = mgr.predict_binary(input_tensor)
             is_abnormal = (bin_idx == 1) and (bin_conf >= ABNORMAL_CONF_THRESHOLD)
 
             # ---- Step 2: 条件触发多分类 ----
             if is_abnormal:
-                multi_idx, multi_conf, multi_probs = model_manager.predict_multi(input_tensor)
+                multi_idx, multi_conf, multi_probs = mgr.predict_multi(input_tensor)
                 final_class = MULTICLASS_CLASSES[multi_idx]
                 final_conf = multi_conf
                 final_probs_dict = {name: round(float(p), 4) for name, p in zip(MULTICLASS_CLASSES, multi_probs)}
                 active_model_type = ModelType.MULTICLASS
-                active_model = model_manager.multi_classifier
+                active_model = mgr.multi_classifier
             else:
                 final_class = BINARY_CLASSES[bin_idx]
                 final_conf = bin_conf
                 final_probs_dict = {name: round(float(p), 4) for name, p in zip(BINARY_CLASSES, bin_probs)}
                 active_model_type = ModelType.BINARY
-                active_model = model_manager.binary_classifier
+                active_model = mgr.binary_classifier
 
             # ---- Step 3: MC Dropout (仅对活跃模型) ----
             _, std_prob = mc_dropout_predict(active_model, input_tensor, n_samples=mc_samples)
@@ -287,12 +289,102 @@ def analyze_pil_image(
         empty_result["error"] = str(e)
         return empty_result
 
+async def analyze_pil_image(
+    image: Image.Image,
+    conf: float = 0.25,
+    iou: float = 0.45,
+    mc_samples: int = MC_DROPOUT_SAMPLES
+) -> Dict[str, Any]:
+    """异步入口：将同步GPU推理丢到线程池，避免阻塞事件循环"""
+    return await asyncio.to_thread(_analyze_pil_image_sync, image, conf, iou, mc_samples)
+    # empty_result = {
+    #     "total_cells": 0,
+    #     "abnormal_cells": 0,
+    #     "cells": [],
+    #     "highest_risk": "none",
+    #     "max_uncertainty": 0.0,
+    #     "needs_clarification": False,
+    #     "error": None
+    # }
+    # try:
+    #     results = model_manager.detector(image, conf=conf, iou=iou)
+    #     cells = []
+    #     res0 = results[0]
+    #     boxes = getattr(res0, "boxes", [])
+    #     morph_tool = MorphologyTool()
+    #
+    #     for box in boxes:
+    #         xyxy = box.xyxy[0].tolist() if hasattr(box, "xyxy") else box.tolist()
+    #         x1, y1, x2, y2 = map(int, xyxy)
+    #         cell_img = image.crop((x1, y1, x2, y2)).convert("RGB")
+    #         input_tensor = preprocess_image_pil(cell_img, mode="eval").unsqueeze(0).to(DEVICE)
+    #
+    #         # ---- Step 1: 二分类筛查 ----
+    #         bin_idx, bin_conf, bin_probs = model_manager.predict_binary(input_tensor)
+    #         is_abnormal = (bin_idx == 1) and (bin_conf >= ABNORMAL_CONF_THRESHOLD)
+    #
+    #         # ---- Step 2: 条件触发多分类 ----
+    #         if is_abnormal:
+    #             multi_idx, multi_conf, multi_probs = model_manager.predict_multi(input_tensor)
+    #             final_class = MULTICLASS_CLASSES[multi_idx]
+    #             final_conf = multi_conf
+    #             final_probs_dict = {name: round(float(p), 4) for name, p in zip(MULTICLASS_CLASSES, multi_probs)}
+    #             active_model_type = ModelType.MULTICLASS
+    #             active_model = model_manager.multi_classifier
+    #         else:
+    #             final_class = BINARY_CLASSES[bin_idx]
+    #             final_conf = bin_conf
+    #             final_probs_dict = {name: round(float(p), 4) for name, p in zip(BINARY_CLASSES, bin_probs)}
+    #             active_model_type = ModelType.BINARY
+    #             active_model = model_manager.binary_classifier
+    #
+    #         # ---- Step 3: MC Dropout (仅对活跃模型) ----
+    #         _, std_prob = mc_dropout_predict(active_model, input_tensor, n_samples=mc_samples)
+    #         uncertainty = float(np.max(std_prob))
+    #
+    #         # ---- Step 4: 形态学 ----
+    #         morph = morph_tool.run(cell_img)
+    #
+    #         cells.append({
+    #             "bbox": [x1, y1, x2, y2],
+    #             "binary_result": {"class": BINARY_CLASSES[bin_idx], "confidence": round(bin_conf, 4)},
+    #             "final_class": final_class,
+    #             "final_confidence": round(final_conf, 4),
+    #             "model_used": active_model_type.value,
+    #             "uncertainty": round(uncertainty, 4),
+    #             "probabilities": final_probs_dict,
+    #             "morphology": morph
+    #         })
+    #
+    #     total_cells = len(cells)
+    #     abnormal_cells = sum(1 for c in cells if c["binary_result"]["class"] == "abnormal")
+    #     highest_risk = max(cells, key=lambda x: x["final_confidence"])["final_class"] if cells else "none"
+    #     max_uncertainty = max((c["uncertainty"] for c in cells), default=0.0)
+    #
+    #     return {
+    #         "total_cells": total_cells,
+    #         "abnormal_cells": abnormal_cells,
+    #         "cells": cells,
+    #         "highest_risk": highest_risk,
+    #         "max_uncertainty": round(max_uncertainty, 4),
+    #         "needs_clarification": max_uncertainty > UNCERTAINTY_THRESHOLD,
+    #         "error": None
+    #     }
+    #
+    # except Exception as e:
+    #     logger.error(f"模型分析失败: {e}", exc_info=True)
+    #     empty_result["error"] = str(e)
+    #     return empty_result
+
 # === 内部调用入口 ===
-def analyze_image_from_path(file_path: str, **kwargs) -> Dict[str, Any]:
+async def analyze_image_from_path(file_path: str, **kwargs) -> Dict[str, Any]:
+    """
+       异步包装器：将耗时的同步图像分析任务放到线程池中执行。
+    """
     try:
         with Image.open(file_path) as img:
             img = img.convert("RGB")
-        return analyze_pil_image(img, **kwargs)
+        return await analyze_pil_image(img, **kwargs)
 
     except Exception as e:
         logger.error(f"未能打开图片 {file_path}： {e}")
@@ -315,6 +407,6 @@ def analyze_case_folder(folder_path: str, pattern: str = "*.jpg", **kwargs) -> D
     for path in image_paths:
         filename = os.path.basename(path)
         logger.info(f"Analyzing {filename} ...")
-        results[filename] = analyze_image_from_path(path, **kwargs)
+        results[filename] = _analyze_pil_image_sync(Image.open(path).convert("RGB"), **kwargs)
     return results
 

@@ -1,16 +1,18 @@
-from typing import Dict, Any, Literal,List
+from typing import Dict, Any, List
 from functools import partial
 from Agents.state import DiagnosisState
 from services.rag_service import MedicalKnowledgeBase
 from pydantic import BaseModel, Field
-from langgraph.graph import StateGraph,END
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.types import interrupt, Command
+from langgraph.graph import StateGraph, END
+from contextlib import AsyncExitStack
+from core.redis_client import REDIS_URL
+from langgraph.checkpoint.redis import AsyncRedisSaver
+from langgraph.types import interrupt
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage,SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 import os
-from langchain_core.runnables import RunnableConfig
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -93,12 +95,12 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
         }
 # ====节点2、决策路由====
 def decision_router(state: DiagnosisState) -> str:
-    '''根据不确定性评估结果路由'''
+    """根据不确定性评估结果路由"""
     return state.get("action","direct_report")
 
 # ====节点3、主动追问====
-def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
-    '''高不确定性时主动追问关键信息'''
+async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """高不确定性时主动追问关键信息"""
     cv_result = state.get("cv_result", {}) or {}
     llm = get_llm()
     structured_llm = llm.with_structured_output(ClarificationResponse)
@@ -116,7 +118,7 @@ def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     请生成2-3个最关键的追问问题, 帮助降低诊断不确定性。
     '''
 
-    result = structured_llm.invoke(prompt)
+    result = await structured_llm.ainvoke(prompt)
 
     # 使用 interrupt 暂停图的执行，并将问题发送给前端/用户
     # 当用户回复后，图会从这里恢复，并将用户的回复作为 interrupt 的返回值
@@ -140,33 +142,33 @@ def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
 
 
 # ====节点4、RAG检索====
-def deep_retrieval_agent(state: DiagnosisState,kb: MedicalKnowledgeBase) -> Dict[str, Any]:
-    '''中等不确定性时进行深度知识检索'''
+async def deep_retrieval_agent(state: DiagnosisState, kb: MedicalKnowledgeBase) -> Dict[str, Any]:
+    """中等不确定性时进行深度知识检索"""
+    loop = asyncio.get_running_loop()
     cv_result = state.get("cv_result", {}) or {}
     classification = cv_result.get("highest_risk", "")
 
     # 1. 基于分类检索
-    class_knowledge = kb.retrieve_by_classification(classification, k=5)
+    class_knowledge = await loop.run_in_executor(None,kb.retrieve_by_classification,classification, k=5)
 
     # 2. 基于形态学特征检索 (利用现有cell_analyzer)
     cells = cv_result.get("cells", [])
     if cells:
         morphology = cells[0].get("morphology", {})
-        morph_knowledge = kb.retrieve_by_morphology(morphology, k=3)
+        morph_knowledge = await loop.run_in_executor(None,kb.retrieve_by_morphology,morphology, k=3)
     else:
         morph_knowledge = []
 
     all_knowledge = class_knowledge + morph_knowledge
 
     return {
-        **state,
         "retrieved_knowledge": all_knowledge,
         "current_step": "deep_retrieval"
     }
 
 # ====节点5、直接报告====
-def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
-    '''低不确定性时直接生成诊断报告'''
+async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """低不确定性时直接生成诊断报告"""
     cv_results = state.get("cv_result", {})
     cells = cv_results.get("cells", [])
     first_cell = cells[0] if cells else {}
@@ -201,7 +203,7 @@ def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     chain = report_prompt | llm
 
     try:
-        response = chain.invoke({"context": context})
+        response = await chain.ainvoke({"context": context})
 
         # 生成建议
         recommendations = {
@@ -227,7 +229,7 @@ def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         }
 
 # ====节点6、可解释性报告====
-def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
+async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     '''
     生成带可解释性的综合报告
     结合Grad-CAM + 形态学分析 + LLM解释
@@ -280,13 +282,12 @@ def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     llm = get_llm()
     chain = explain_prompt | llm
-    response = chain.invoke({"context": explain_context})
+    response = await chain.ainvoke({"context": explain_context})
 
     # 在原有报告基础上追加可解释性
     full_report = state.get("diagnosis_report", "") + "\n\n---\n\n【AI诊断逻辑解释】\n" + response.content
 
     return {
-        **state,
         "diagnosis_report": full_report,
         "current_step": "explainable_report",
         "is_complete": True
@@ -294,27 +295,12 @@ def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
 
 # ====节点7、构建状态机图====
-kb = MedicalKnowledgeBase(persist_dir="./knowledge_db")
-
-import glob
-pdf_dir = "./Cervical_cytology"
-pdf_files = glob.glob(f"{pdf_dir}/*.pdf")
-if pdf_files:
-    print(f"[RAG] 发现 {len(pdf_files)} 篇医学文献，正在构建知识库...")
-    try:
-        chunk_count = kb.load_documents(pdf_files)
-        print(f"[RAG] 知识库构建完成，共 {chunk_count} 个文本块")
-    except Exception as e:
-        print(f"[RAG] 知识库加载失败: {e}")
-else:
-    print(f"[RAG] 未在 {pdf_dir}/ 中找到 PDF 文献，RAG 检索将返回空结果")
-
 builder = StateGraph(DiagnosisState)
 
 # 添加节点
 builder.add_node("uncertainty_assessment", uncertainty_assessment_agent)
 builder.add_node("clarification", clarification_agent)
-builder.add_node("deep_retrieval", partial(deep_retrieval_agent,kb=kb))
+builder.add_node("deep_retrieval", deep_retrieval_agent)
 builder.add_node("generate_report", generate_report_agent)
 builder.add_node("explainable_report", explainable_report_agent)
 
@@ -345,6 +331,44 @@ builder.add_edge("generate_report", "explainable_report")
 # 可解释性报告后结束
 builder.add_edge("explainable_report", END)
 
-# 必须使用 MemorySaver 来支持多轮对话的持久化
-memory = MemorySaver()
-graph = builder.compile(checkpointer= memory)
+## 设置 Redis Checkpoint
+_checkpointer_cm = AsyncRedisSaver.from_conn_string(REDIS_URL)
+_exit_stack = AsyncExitStack()
+kb: MedicalKnowledgeBase = None
+graph = None
+
+def get_kb() -> MedicalKnowledgeBase:
+    if kb is None:
+        raise RuntimeError("知识库未初始化：请先调用init_kb()")
+    return kb
+
+async def init_kb():
+    """延迟构建知识库（加载嵌入模型 + PDF），只在应用启动时调用一次"""
+    global kb
+    import glob
+    kb = MedicalKnowledgeBase(persist_dir="./knowledge_db")
+    pdf_files = glob.glob("./Cervical_cytology/*.pdf")
+    if pdf_files:
+        print(f"[RAG] 发现 {len(pdf_files)} 篇医学文献，正在构建知识库...")
+        try:
+            chunk_count = await kb.load_documents(pdf_files)
+            print(f"[RAG] 知识库构建完成，共 {chunk_count} 个文本块")
+        except Exception as e:
+            print(f"[RAG] 知识库加载失败: {e}")
+    else:
+        print("[RAG] 未找到 PDF 文献，RAG 检索将返回空结果")
+
+async def init_checkpoint_store():
+    """进入上下文打开连接 → 建索引 → 编译图（幂等性由 lifespan 保证只调一次）"""
+    global graph
+    checkpointer = await _exit_stack.enter_async_context(_checkpointer_cm)
+    await checkpointer.asetup()
+    graph = builder.compile(checkpointer=checkpointer)
+
+async def close_checkpoint_store():
+    await _exit_stack.aclose()
+
+def get_graph():
+    if graph is None:
+        raise RuntimeError("图未初始化：请先在 lifespan 中调用 init_checkpoint_store()")
+    return graph

@@ -1,19 +1,19 @@
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from pydantic import BaseModel as PydanticBaseModel
-from typing import Optional
+from typing import List
 import uuid
 import json
 import os
 
-from Agents.conversation import ConversationManager
-from services.vision_service import analyze_image_from_path
 import io
 import zipfile
-from typing import List
 from PIL import Image
-
+from werkzeug.utils import secure_filename
+from functools import lru_cache
+from core.auth import verify_token
+from contextlib import asynccontextmanager
+from Agents.conversation import ConversationManager
 from services.vision_service import (
     analyze_pil_image,          # 核心分析函数
     DEVICE, YOLO_WEIGHTS,       # 配置常量
@@ -27,7 +27,7 @@ class FollowUpRequest(PydanticBaseModel):
     session_id: str
     message: str
 
-# 1. 引入连接管理器 (防止 WebSocket 内存泄漏)
+# 引入连接管理器 (防止 WebSocket 内存泄漏)
 class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[str, WebSocket] = {}
@@ -47,20 +47,64 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# 定义文件头字典
+MAGIC_BYTES:dict[str,list[bytes]] = {
+    'jpg': [b'\xff\xd8\xff'],
+    'jpeg': [b'\xff\xd8\xff'],
+    'png': [b'\x89PNG\r\n\x1a\n'],
+    'tif': [b'II*\x00', b'MM\x00*'],
+    'tiff': [b'II*\x00', b'MM\x00*'],
+    'bmp': [b'BM'],
+    'svs': [b'II*\x00', b'MM\x00*'], # SVS文件通常是TIFF格式的变体
+}
 
-# 2. 依赖注入 ConversationManager
+# 定义允许的 MIME 类型
+ALLOWED_MIME = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    '.bmp': 'image/bmp',
+    '.svs': {'image/tiff', 'image/svs', 'application/octet-stream'}
+}
+
+# 文件安全校验函数
+def validate_file_content(content: bytes, filename: str, content_type: str):
+    ext = os.path.splitext(filename)[1].lower()
+
+    if content_type and ALLOWED_MIME.get(ext) and content_type != ALLOWED_MIME[ext]:
+        raise HTTPException(status_code=400, detail="Content-Type 与文件类型不符")
+
+    sigs = MAGIC_BYTES.get(ext)
+    if sigs and not any(content.startswith(s) for s in sigs):
+        raise HTTPException(status_code=400, detail=f"文件内容与扩展名不匹配: {filename}")
+    if ext in {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'}:
+        try:
+            with Image.open(io.BytesIO(content)) as img:
+                img.verify()  # 验证图像完整性
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"文件不是有效图片: {filename}")
+
+# 依赖注入 ConversationManager
+@lru_cache()
 def get_conversation_manager():
-    # 连接 Redis/DB
-    from Agents.conversation import ConversationManager
     return ConversationManager()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from Agents.diagnosis_graph import init_checkpoint_store, close_checkpoint_store, init_kb
+    await init_kb()
+    await init_checkpoint_store()
+    yield
+    await close_checkpoint_store()
 
-app = FastAPI(title="AI Agent宫颈病理诊断系统 v2.0", version="2.0")
+app = FastAPI(title="AI Agent宫颈病理诊断系统", version="2.0", lifespan=lifespan)
 
 # 3. 收紧 CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins= os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","), # 仅允许白名单
+    allow_origins= os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),  # 仅允许白名单
     allow_methods=["*"],
     allow_headers=["*"]
 )
@@ -71,7 +115,7 @@ async def analyze_image(file: UploadFile = File(...)):
     try:
         data = await file.read()
         image = Image.open(io.BytesIO(data)).convert("RGB")
-        return analyze_pil_image(image)
+        return await analyze_pil_image(image)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"图像处理失败: {e}")
 
@@ -83,7 +127,7 @@ async def analyze_batch(files: List[UploadFile] = File(...)):
         try:
             data = await file.read()
             image = Image.open(io.BytesIO(data)).convert("RGB")
-            results[file.filename] = analyze_pil_image(image)
+            results[file.filename] = await analyze_pil_image(image)
         except Exception as e:
             results[file.filename] = {"出错": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
     return results
@@ -105,13 +149,12 @@ async def analyze_zip(upload_file: UploadFile = File(...)):
                 try:
                     with z.open(filename) as img_file:
                         image = Image.open(io.BytesIO(img_file.read())).convert("RGB")
-                    results[filename] = analyze_pil_image(image)
+                    results[filename] = await analyze_pil_image(image)
                 except Exception as e:
                     results[filename] = {"错误": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="无效的ZIP文件")
     return results
-
 
 @app.get("/health", summary="健康检查")
 async def health_check():
@@ -130,8 +173,8 @@ async def health_check():
         }
     }
 
-# --- 新增：FastAPI 路由 ---
-@app.post("/api/agent/followup")
+# --- FastAPI 路由 ---
+@app.post("/api/agent/followup",dependencies=[Depends(verify_token)])
 async def agent_followup(
     request: FollowUpRequest,
     conv_manager: ConversationManager = Depends(get_conversation_manager)
@@ -143,7 +186,7 @@ async def agent_followup(
     try:
         # 调用 ConversationManager 处理追问，并传入固定的时空上下文
         # 注意：这里将 time_location 作为参数传入，需要同步修改 conversation.py 中的方法签名
-        response = conv_manager.followup_chat(
+        response = await conv_manager.followup_chat(
             session_id=request.session_id,
             user_input=request.message,
             time_location="<time_location>\n当前时间：2026-06-27 星期六\n当前地点：浙江省 温州市\n</time_location>"
@@ -155,7 +198,7 @@ async def agent_followup(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/agent/clarify/{session_id}")
+@app.post("/api/agent/clarify/{session_id}",dependencies=[Depends(verify_token)])
 async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: ConversationManager = Depends(get_conversation_manager)):
     """
     处理用户对诊断报告的澄清请求。
@@ -163,7 +206,7 @@ async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: C
     user_input = body.get("user_input", "")
     if not user_input:
         raise HTTPException(status_code=400, detail="缺少 user_input 字段")
-    result = conv_manager.process_clarification(session_id, user_input)
+    result = await conv_manager.process_clarification(session_id, user_input)
     return {
         "session_id": session_id,
         "status": "complete" if result["is_complete"] else "awaiting_clarification",
@@ -172,32 +215,37 @@ async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: C
     }
 
 # 4. 优化后的上传接口
-@app.post("/api/agent/upload")
+@app.post("/api/agent/upload", dependencies=[Depends(verify_token)])
 async def agent_upload(
         file: UploadFile = File(...),
         conv_manager=Depends(get_conversation_manager)
 ):
+    allowed_exits = {'.svs', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'}
+    max_size = 30 * 1024 * 1024
+    safe_name = secure_filename(file.filename or "")
     # 文件安全校验
-    if not file.filename.endswith(('.svs', '.jpg', '.png')):
+    if not safe_name or not safe_name.lower().endswith(tuple(allowed_exits)):
         raise HTTPException(status_code=400, detail="不支持的文件格式")
 
     session_id = str(uuid.uuid4())
-    file_path = f"./uploads/{session_id}_{file.filename}"
+    upload_dir = os.path.abspath("./uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, f"{session_id}_{safe_name}")
 
-    # 确保目录存在并保存文件
-    os.makedirs("./uploads", exist_ok=True)
+    if not file_path.startswith(upload_dir):
+        raise HTTPException(status_code=400, detail="非法文件路径")
+
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail="文件超过30MB限制")
+
+    validate_file_content(content, safe_name, file.content_type)
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
 
-    # TODO: 生产环境强烈建议将 analyze_image 和 start_diagnosis 放入 Celery 队列
-    # 这里暂时保留同步调用，但应确保 analyze_image 内部不阻塞主线程
+    # 生产环境强烈建议将 analyze_image 和 start_diagnosis 放入 Celery 队列
     try:
-        # from services.vision_service import analyze_image
-        # cv_results = await analyze_image(file_path)
-        # result = conv_manager.start_diagnosis(session_id, file_path, cv_results)
-        result = conv_manager.start_diagnosis(file_path, session_id=session_id)
-
+        result = await conv_manager.start_diagnosis(file_path, session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"诊断启动失败: {str(e)}")
 
@@ -218,9 +266,9 @@ async def agent_websocket(websocket: WebSocket, session_id: str):
             message = await websocket.receive_text()
             data = json.loads(message)
             user_input = data.get("message", "")
-
-            # 实际生产中，这里应通过 Redis Pub/Sub 获取后台 Agent 的流式进度
-            # 这里仅作逻辑演示
+            if not user_input:
+                await manager.send_progress(session_id, {"type": "error", "message": "消息不能为空"})
+                continue
             await manager.send_progress(session_id, {"type": "stream", "content": "正在分析您的补充信息..."})
 
     except WebSocketDisconnect:

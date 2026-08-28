@@ -1,15 +1,46 @@
 import uuid
 import logging
 from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from Agents.diagnosis_graph import graph, get_llm  # 导入图实例和LLM工厂函数
+from datetime import datetime, timedelta
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, messages_from_dict, message_to_dict
+from Agents.diagnosis_graph import get_graph, get_llm, get_kb  # 导入图实例和LLM工厂函数
 from Agents.state import DiagnosisState
 from services.vision_service import analyze_image_from_path  # 导入CV服务
+import json
+from core.redis_client import get_redis_client
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
+SESSION_KEY_PREFIX = "session:"
+
+def _serisalize_state(state: DiagnosisState) -> str:
+    """将 DiagnosisState 序列化为 JSON 字符串，特殊处理 BaseMessage 列表"""
+    data = dict(state)
+    history = data.get("conversation_history", [])
+    data["conversation_history"] = [message_to_dict(m) for m in history]
+    return json.dumps(data, ensure_ascii=False)
+
+def _deserialize_state(raw: str) -> DiagnosisState:
+    """从 JSON 字符串反序列化为 DiagnosisState"""
+    data = json.loads(raw)
+    if "conversation_history" in data and data["conversation_history"]:
+        data["conversation_history"] = [
+            _msg_from_dict(d) for d in data["conversation_history"]
+        ]
+    return DiagnosisState(**data)
+
+def _msg_from_dict(d: dict) -> BaseMessage:
+    """根据 type 字段还原具体的 Message 类型"""
+    msg_type = d.get("type", "")
+    content = d.get("data", {}).get("content", "")
+    if msg_type == "human":
+        return HumanMessage(content=content)
+    elif msg_type == "ai":
+        return AIMessage(content=content)
+    elif msg_type == "system":
+        return SystemMessage(content=content)
+    return HumanMessage(content=content)
 
 class ConversationManager:
     """
@@ -23,10 +54,28 @@ class ConversationManager:
     """
 
     def __init__(self):
-        # 内存级会话存储，生产环境建议替换为 Redis
-        self.sessions: Dict[str, DiagnosisState] = {}
+        self.session_ttl = timedelta(days=1)  # 会话过期时间
 
-    def start_diagnosis(self, image_path: str, session_id: Optional[str] = None) -> DiagnosisState:
+    async def _save_session(self,session_id: str,state: DiagnosisState):
+        """序列化状态并写入 Redis，同时设置 TTL"""
+        key = f"{SESSION_KEY_PREFIX}{session_id}"
+        redis_client = await get_redis_client()
+        await redis_client.setex(key, int(self.session_ttl.total_seconds()),_serisalize_state(state))
+
+    async def _load_session(self,session_id: str) -> Optional[DiagnosisState]:
+        """从Redis读取并反序列化状态"""
+        key = f"{SESSION_KEY_PREFIX}{session_id}"
+        redis_client = await get_redis_client()
+        raw = await redis_client.get(key)
+        if raw is None:
+            return None
+        try:
+            return _deserialize_state(raw)
+        except Exception as e:
+            logger.error(f"反序列化会话 [{session_id}] 失败: {e}")
+            return None
+
+    async def start_diagnosis(self, image_path: str, session_id: Optional[str] = None) -> DiagnosisState:
         """
         启动新诊断流程：执行 CV 分析 -> 初始化状态 -> 触发 Agent 图
 
@@ -44,7 +93,7 @@ class ConversationManager:
         # 2. 调用视觉服务进行细胞分析 (这会触发 YOLO + ResNet50 双模型推理)
         logger.info(f"会话 [{session_id}] 开始CV图像分析: {image_path}")
         try:
-            cv_results = analyze_image_from_path(image_path)
+            cv_results = await analyze_image_from_path(image_path)
         except Exception as e:
             logger.error(f"CV图像分析失败: {e}")
             raise ValueError(f"图像分析服务异常: {e}")
@@ -72,19 +121,23 @@ class ConversationManager:
         )
 
         # 4. 运行 Agent 图
-        # 必须传入config以支持LangGraph的Checkpointer(MemorySaver)
+        # 必须传入config以支持LangGraph的Checkpointer
         config = {"configurable": {"thread_id": session_id}}
 
         try:
-            final_state = graph.invoke(initial_state, config)
-            self.sessions[session_id] = final_state
+            final_state = await get_graph.ainvoke(initial_state, config, kb=get_kb())
+            interrupted = final_state.get("__interrupt__")
+            if interrupted:
+                final_state["clarification_questions"] = interrupted[0].value.get("questions")
+                final_state["needs_clarification"] = True
+            await self._save_session(session_id, final_state)
             logger.info(f"会话 [{session_id}] 初始诊断完成，风险等级: {final_state.get('risk_level')}")
             return final_state
         except Exception as e:
             logger.error(f"会话 [{session_id}] Agent流程执行失败: {e}", exc_info=True)
             raise
 
-    def process_clarification(self, session_id: str, user_input: str) -> DiagnosisState:
+    async def process_clarification(self, session_id: str, user_input: str) -> DiagnosisState:
         """
         处理用户对澄清问题的回答。
 
@@ -101,7 +154,7 @@ class ConversationManager:
         Returns:
             更新后的状态
         """
-        state = self.sessions.get(session_id)
+        state = await self._load_session(session_id)
         if not state:
             raise ValueError(f"会话 [{session_id}] 不存在或已过期")
 
@@ -119,21 +172,21 @@ class ConversationManager:
         }
 
         # 3. 合并状态并继续执行图
-        # 注意：这里使用update，以保持其他字段不变
+        # 这里使用update，以保持其他字段不变
         for key, value in state_update.items():
             state[key] = value
 
         config = {"configurable": {"thread_id": session_id}}
         try:
-            result = graph.invoke(state, config)
-            self.sessions[session_id] = result
+            result = await get_graph.ainvoke(state, config, kb=get_kb())
+            await self._save_session(session_id, result)
             logger.info(f"会话 [{session_id}] 澄清处理完成，新动作: {result.get('action')}")
             return result
         except Exception as e:
             logger.error(f"会话 [{session_id}] 澄清处理失败: {e}", exc_info=True)
             raise
 
-    def followup_chat(self, session_id: str, user_input: str, time_location: str = "") -> str:
+    async def followup_chat(self, session_id: str, user_input: str, time_location: str = "") -> str:
         """
         诊断完成后的自由追问。
         此方法不修改核心诊断状态，仅基于已有信息进行问答。
@@ -145,7 +198,7 @@ class ConversationManager:
         Returns:
             AI的回复文本
         """
-        state = self.sessions.get(session_id)
+        state = await self._load_session(session_id)
         if not state:
             raise ValueError("会话不存在，请重新上传图片开始新的诊断。")
 
@@ -165,7 +218,7 @@ class ConversationManager:
         risk_level = state.get("risk_level", "未知")
 
         # 构建最终的 Prompt
-        # 注意：这里将 time_location 插入到了Prompt的最开始部分
+        # 这里将 time_location 插入到了Prompt的最开始部分
         followup_prompt = f'''{ctx_time_location}
 
         【角色】你是一位经验丰富的病理科医生助手。
@@ -196,7 +249,7 @@ class ConversationManager:
                 HumanMessage(content=followup_prompt)
             ]
 
-            response = llm.invoke(messages)
+            response = await llm.ainvoke(messages)
 
             # 创建 AI 消息并加入历史
             ai_msg = AIMessage(content=response.content)
@@ -208,13 +261,13 @@ class ConversationManager:
             logger.error(f"追问对话失败: {e}")
             return "抱歉，AI医生暂时无法回答这个问题，请稍后再试。"
 
-    def get_session_state(self, session_id: str) -> Optional[DiagnosisState]:
+    async def get_session_state(self, session_id: str) -> Optional[DiagnosisState]:
         """获取会话当前状态（用于前端同步）"""
-        return self.sessions.get(session_id)
+        return await self._load_session(session_id)
 
-    def clear_session(self, session_id: str) -> bool:
+    async def clear_session(self, session_id: str) -> bool:
         """清除会话"""
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            return True
-        return False
+        key = f"{SESSION_KEY_PREFIX}{session_id}"
+        redis_client = await get_redis_client()
+        result = await redis_client.delete(key)
+        return result > 0

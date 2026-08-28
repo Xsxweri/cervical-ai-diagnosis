@@ -4,8 +4,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 import os
 import torch
+import asyncio
+from typing import List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+vector_store_executor = ThreadPoolExecutor(max_workers=2)
 
 # 定义知识库类
 class MedicalKnowledgeBase:
@@ -13,24 +16,51 @@ class MedicalKnowledgeBase:
     RAG医学诊断知识库，用于存储和检索医学诊断相关的知识和信息。
     该知识库包含了各种医学文献、指南、病例分析等内容，支持基于检索增强生成（RAG）的问答和诊断流程。
     """
+
     def __init__(self, persist_dir="./knowledge_db"):
+        self.persist_dir = persist_dir
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name="BAAI/bge-m3",
-            model_kwargs={'device': device},
+            model_kwargs={'device': self.device},
             encode_kwargs={'normalize_embeddings': True} 
         )
-        self.persist_dir = persist_dir
 
-        if os.path.exists(persist_dir):
-            self.vectorstore = Chroma(
-                persist_directory=persist_dir,
-                embedding_function=self.embeddings
-            )
+        self.vectorstore = None
+        self._load_vectorstore()
+
+    def _load_vectorstore(self):
+        """同步加载向量库（在构造函数中调用）"""
+        if os.path.exists(self.persist_dir):
+            try:
+                self.vectorstore = Chroma(
+                    persist_directory=self.persist_dir,
+                    embedding_function=self.embeddings
+                )
+            except Exception as e:
+                print(f"加载向量库失败: {e}")
         else:
-            self.vectorstore = None
+            print(f"向量库目录不存在: {self.persist_dir}，将初始化为空库")
 
-    def load_documents(self, pdf_paths: list):
-        '''加载医学文献PDF'''
+    async def load_documents(self, pdf_paths: list[str]) -> int:
+        """异步加载文档（主要耗时在磁盘IO和文本切分）"""
+        loop = asyncio.get_event_loop()
+
+        # 将耗时的文件读取和切分放到线程池
+        chunks = await loop.run_in_executor(None, self._process_documents_sync, pdf_paths)
+
+        if self.vectorstore is None:
+            # 如果是新建库，需要同步操作
+            await loop.run_in_executor(vector_store_executor, self._create_vectorstore_sync, chunks)
+        else:
+            await loop.run_in_executor(vector_store_executor, self.vectorstore.add_documents, chunks)
+            await loop.run_in_executor(vector_store_executor, self.vectorstore.persist)
+
+        return len(chunks)
+
+    def _process_documents_sync(self, pdf_paths: List[str]) -> List:
+        """同步处理文档的私有方法"""
         documents = []
         failed = []
         for path in pdf_paths:
@@ -44,34 +74,35 @@ class MedicalKnowledgeBase:
         if not documents:
             raise ValueError(f"所有PDF加载失败: {failed}")
 
-        # 智能切分: 保持段落完整性
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             separators=["\n\n", "\n", "。", "；", " ", ""]
         )
-        chunks = text_splitter.split_documents(documents)
+        return text_splitter.split_documents(documents)
 
-        # 构建向量库
-        if self.vectorstore is None:
-            self.vectorstore = Chroma.from_documents(
-                documents=chunks,
-                embedding=self.embeddings,
-                persist_directory=self.persist_dir
-            )
-        else:
-            # 如果库已存在，直接追加文档
-            self.vectorstore.add_documents(chunks)
-            self.vectorstore.persist()
+    def _create_vectorstore_sync(self, chunks):
+        """同步创建向量库的私有方法"""
+        self.vectorstore = Chroma.from_documents(
+            documents=chunks,
+            embedding=self.embeddings,
+            persist_directory=self.persist_dir
+        )
 
-        return len(chunks)
-
-    def retrieve(self, query: str, k: int = 5):
-        '''检索相关知识'''
+    async def retrieve(self, query: str, k: int = 5):
+        """异步检索接口，检索相关知识"""
         if not self.vectorstore:
             return []
 
-        results = self.vectorstore.similarity_search_with_score(query, k=k)
+        loop = asyncio.get_event_loop()
+
+        # 将相似度搜索放到专用线程池执行
+        results = await loop.run_in_executor(
+            vector_store_executor,
+            self.vectorstore.similarity_search_with_score,
+            query,
+            k
+        )
 
         return [
             {
@@ -83,8 +114,8 @@ class MedicalKnowledgeBase:
             for doc, score in results
         ]
 
-    def retrieve_by_classification(self, classification: str, k: int = 3):
-        '''根据分类结果检索对应知识'''
+    async def retrieve_by_classification(self, classification: str, k: int = 3):
+        """根据分类结果检索对应知识"""
         query_map = {
             # ===正常/异常，粗粒度分类===
             "normal": "正常宫颈鳞状上皮细胞形态学特征 NILM 筛查随访建议",
@@ -108,19 +139,25 @@ class MedicalKnowledgeBase:
             print(f"未知分类 '{classification}'，使用原始标签检索")
             query = f"宫颈细胞学 {classification} 形态学特征及临床意义"
 
-        return self.retrieve(query, k=k)
+        return await self.retrieve(query, k=k)
 
-    def retrieve_by_morphology(self, morphology_features: dict, k: int = 3):
-        '''根据形态学特征检索相关知识'''
+    async def retrieve_by_morphology(self, morphology_features: dict, k: int = 3):
+        """根据形态学特征检索相关知识"""
         queries = []
         if morphology_features.get("nuclear_cytoplasmic_ratio", 0) > 0.5:
             queries.append("核质比增高,细胞异型性诊断意义")
         if morphology_features.get("circularity", 1) < 0.7:
             queries.append("细胞形态不规则病理意义")
 
-        results = []
-        for q in queries:
-            results.extend(self.retrieve(q, k=2))
+        if not queries:
+            return []
+
+        # 并发执行多个检索任务
+        tasks = [self.retrieve(q, k=2) for q in queries]
+        results_list = await asyncio.gather(*tasks)
+
+        # 扁平化结果并去重
+        results = [item for sublist in results_list for item in sublist]
 
         seen_sources = set()
         unique_results = []
