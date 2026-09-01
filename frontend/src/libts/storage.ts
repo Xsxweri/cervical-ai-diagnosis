@@ -1,7 +1,32 @@
 import type { HistoryRecord } from '../types';
 
 const KEY = 'cervical-diagnosis-history';
+const TOKEN_KEY = 'cervical-auth-token';
 const MAX = 50;
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    /* noop */
+  }
+}
+
+export function clearToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* noop */
+  }
+}
 
 export function getHistory(): HistoryRecord[] {
   try {

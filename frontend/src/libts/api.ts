@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { AgentResponse, CVResult, FollowUpResponse, HealthResponse } from '../types';
+import {getToken, setToken, clearToken} from './storage';
 
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000';
@@ -7,6 +8,32 @@ export const WS_BASE: string =
   (import.meta.env.VITE_WS_BASE as string | undefined) ?? 'ws://localhost:8000';
 
 const http = axios.create({ baseURL: API_BASE, timeout: 120_000 });
+
+http.interceptors.request.use((config) => {
+    const token = getToken();
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  });
+
+http.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.response?.status === 401) clearToken();
+      return Promise.reject(error);
+    }
+  );
+
+export interface LoginResponse {
+  token: string;
+  doctor: {name?:string, hospital?:string, department?:string};
+}
+
+/**医生登录并保存token */
+export async function login(username: string, password: string): Promise<LoginResponse> {
+    const { data } = await http.post<LoginResponse>('/api/auth/login', { username, password });
+    setToken(data.token);
+    return data;
+}
 
 /** 健康检查 */
 export async function fetchHealth(): Promise<HealthResponse> {

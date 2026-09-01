@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 from PIL import Image
 from werkzeug.utils import secure_filename
 from functools import lru_cache
-from core.auth import verify_token
+from core.auth import verify_token,create_token
+from werkzeug.security import check_password_hash
 from contextlib import asynccontextmanager
 from Agents.conversation import ConversationManager
 from services.vision_service import (
@@ -31,6 +32,10 @@ from services.vision_service import (
 class FollowUpRequest(PydanticBaseModel):
     session_id: str
     message: str
+
+class LoginRequest(PydanticBaseModel):
+    username: str
+    password: str
 
 # 引入连接管理器 (防止 WebSocket 内存泄漏)
 class ConnectionManager:
@@ -55,6 +60,7 @@ manager = ConnectionManager()
 #限流器
 limiter = Limiter(key_func=get_remote_address)
 
+ACCOUNTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "appWeb", 'doctor_accounts.json')
 SERVICE_LOCATION = os.getenv("SERVICE_LOCATION", "未知地点")
 
 # 定义文件头字典
@@ -136,6 +142,27 @@ app.add_middleware(
 )
 
 # === FastAPI 接口 ===
+# 登录接口
+@app.post("/api/auth/login", summary="医生登录")
+async def login(req: LoginRequest):
+    try:
+        with open(ACCOUNTS_PATH, 'r', encoding='utf-8') as f:
+            accounts = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=500, detail="账号数据读取失败")
+    doctor = next((d for d in accounts if d.get("username") == req.username), None)
+    if not doctor or not check_password_hash(doctor.get("password_hash", ""), req.password):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token = create_token({"sub": doctor["username"], "uid": doctor.get("id")})
+    return{
+        "token": token,
+        "doctor": {
+            "name": doctor.get("name"),
+            "department": doctor.get("department"),
+            "hospital": doctor.get("hospital")
+        },
+    }
+
 # 批量/压缩分析的资源上限常量
 MAX_BATCH_FILES = 10
 MAX_ZIP_FILES = 20
