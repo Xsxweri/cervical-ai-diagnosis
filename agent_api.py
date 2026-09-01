@@ -1,5 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body,Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from pydantic import BaseModel as PydanticBaseModel
 from typing import List
 import uuid
@@ -8,6 +11,8 @@ import os
 
 import io
 import zipfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from PIL import Image
 from werkzeug.utils import secure_filename
 from functools import lru_cache
@@ -47,15 +52,20 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+#限流器
+limiter = Limiter(key_func=get_remote_address)
+
+SERVICE_LOCATION = os.getenv("SERVICE_LOCATION", "未知地点")
+
 # 定义文件头字典
 MAGIC_BYTES:dict[str,list[bytes]] = {
-    'jpg': [b'\xff\xd8\xff'],
-    'jpeg': [b'\xff\xd8\xff'],
-    'png': [b'\x89PNG\r\n\x1a\n'],
-    'tif': [b'II*\x00', b'MM\x00*'],
-    'tiff': [b'II*\x00', b'MM\x00*'],
-    'bmp': [b'BM'],
-    'svs': [b'II*\x00', b'MM\x00*'], # SVS文件通常是TIFF格式的变体
+    '.jpg': [b'\xff\xd8\xff'],
+    '.jpeg': [b'\xff\xd8\xff'],
+    '.png': [b'\x89PNG\r\n\x1a\n'],
+    '.tif': [b'II*\x00', b'MM\x00*'],
+    '.tiff': [b'II*\x00', b'MM\x00*'],
+    '.bmp': [b'BM'],
+    '.svs': [b'II*\x00', b'MM\x00*'], # SVS文件通常是TIFF格式的变体
 }
 
 # 定义允许的 MIME 类型
@@ -73,11 +83,14 @@ ALLOWED_MIME = {
 def validate_file_content(content: bytes, filename: str, content_type: str):
     ext = os.path.splitext(filename)[1].lower()
 
-    if content_type and ALLOWED_MIME.get(ext) and content_type != ALLOWED_MIME[ext]:
-        raise HTTPException(status_code=400, detail="Content-Type 与文件类型不符")
+    allowed = ALLOWED_MIME.get(ext)
+    if allowed:
+        allowed = allowed if isinstance(allowed, (set,frozenset,tuple,list)) else {allowed}
+        if content_type and content_type not in allowed:
+            raise HTTPException(status_code=400, detail="Content-Type 与文件类型不符")
 
-    sigs = MAGIC_BYTES.get(ext)
-    if sigs and not any(content.startswith(s) for s in sigs):
+    sig = MAGIC_BYTES.get(ext)
+    if sig and not any(content.startswith(s) for s in sig):
         raise HTTPException(status_code=400, detail=f"文件内容与扩展名不匹配: {filename}")
     if ext in {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'}:
         try:
@@ -85,6 +98,17 @@ def validate_file_content(content: bytes, filename: str, content_type: str):
                 img.verify()  # 验证图像完整性
         except Exception:
             raise HTTPException(status_code=400, detail=f"文件不是有效图片: {filename}")
+
+def build_time_location() -> str:
+    tz = ZoneInfo(os.getenv("SERVICE_TIMEZONE", "Asia/Shanghai"))
+    now = datetime.now(tz)
+    weekday = "星期" + "一二三四五六日"[now.weekday()]
+    return (
+        f"<time_location>\n"
+        f"当前时间：{now.strftime('%Y-%m-%d')} {weekday}\n"
+        f"当前地点：{SERVICE_LOCATION}\n"
+        f"</time_location>"
+    )
 
 # 依赖注入 ConversationManager
 @lru_cache()
@@ -100,6 +124,8 @@ async def lifespan(app: FastAPI):
     await close_checkpoint_store()
 
 app = FastAPI(title="AI Agent宫颈病理诊断系统", version="2.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 3. 收紧 CORS 配置
 app.add_middleware(
@@ -110,8 +136,14 @@ app.add_middleware(
 )
 
 # === FastAPI 接口 ===
-@app.post("/analyze", summary="单张图片双模型分析")
-async def analyze_image(file: UploadFile = File(...)):
+# 批量/压缩分析的资源上限常量
+MAX_BATCH_FILES = 10
+MAX_ZIP_FILES = 20
+MAX_ZIP_UNCOMPRESSED = 200 * 1024 * 1024 #解压后最大200MB
+
+@app.post("/analyze", summary="单张图片双模型分析", dependencies=[Depends(verify_token)])
+@limiter.limit("10/minute")  # 限流：每分钟最多10次请求
+async def analyze_image(request: Request,file: UploadFile = File(...)):
     try:
         data = await file.read()
         image = Image.open(io.BytesIO(data)).convert("RGB")
@@ -120,8 +152,11 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"图像处理失败: {e}")
 
 
-@app.post("/analyze_batch", summary="多张图片批量分析")
-async def analyze_batch(files: List[UploadFile] = File(...)):
+@app.post("/analyze_batch", summary="多张图片批量分析", dependencies=[Depends(verify_token)])
+@limiter.limit("5/minute")  # 限流：每分钟最多5次请求
+async def analyze_batch(request: Request, files: List[UploadFile] = File(...)):
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(status_code=400, detail=f"单次最多上传 {MAX_BATCH_FILES} 个文件")
     results = {}
     for file in files:
         try:
@@ -133,8 +168,9 @@ async def analyze_batch(files: List[UploadFile] = File(...)):
     return results
 
 
-@app.post("/analyze_zip", summary="ZIP压缩包批量分析")
-async def analyze_zip(upload_file: UploadFile = File(...)):
+@app.post("/analyze_zip", summary="ZIP压缩包批量分析", dependencies=[Depends(verify_token)])
+@limiter.limit("3/minute")  # 限流：每分钟最多3
+async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
     if not upload_file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="仅接受.zip文件")
     results = {}
@@ -142,10 +178,16 @@ async def analyze_zip(upload_file: UploadFile = File(...)):
         zip_bytes = await upload_file.read()
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
             valid_ext = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
-            filenames = [f for f in z.namelist() if f.lower().endswith(valid_ext)]
-            if not filenames:
+            infos = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(valid_ext)]
+            if not infos:
                 raise HTTPException(status_code=400, detail="ZIP中找不到有效的图片")
-            for filename in filenames:
+            if len(infos) > MAX_ZIP_FILES:
+                raise HTTPException(status_code=400, detail=f"ZIP内图片数量超过上限({MAX_ZIP_FILES})")
+            total_uncompressed = sum(i.file_size for i in infos)
+            if total_uncompressed > MAX_ZIP_UNCOMPRESSED:
+                raise HTTPException(status_code=400, detail=f"ZIP解压后总大小超过上限({MAX_ZIP_UNCOMPRESSED / (1024*1024)} MB)")
+            for info in infos:
+                filename = info.filename
                 try:
                     with z.open(filename) as img_file:
                         image = Image.open(io.BytesIO(img_file.read())).convert("RGB")
@@ -189,7 +231,7 @@ async def agent_followup(
         response = await conv_manager.followup_chat(
             session_id=request.session_id,
             user_input=request.message,
-            time_location="<time_location>\n当前时间：2026-06-27 星期六\n当前地点：浙江省 温州市\n</time_location>"
+            time_location=build_time_location()
         )
         return {
             "success": True,

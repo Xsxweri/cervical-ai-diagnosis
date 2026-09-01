@@ -110,26 +110,36 @@ def upload_file():
     if len(files) > 10:
         return jsonify({'success': False, 'message': '最多只能上传10个文件'}), 400
 
-    token = session.get('jwt_token','')
-    headers = {'Authorization': f'Bearer{token}'}
+    token = session.get('jwt', '')
+    if not token:
+        return jsonify({'success': False, 'message': '登陆已过期，请重新登录'}), 401
+    headers = {'Authorization': f'Bearer {token}'}
     results = []
 
     for file in files:
         filename = secure_filename(file.filename)
         if file and allowed_file(file.filename):
             files_binary = {'file': (file.filename, file.read(), file.content_type)}
-            resp = requests.post("http://localhost:8000/api/agent/upload", files=files_binary, headers=headers,timeout=120)
-            prediction = resp.json()
-            results.append({
-                'filename': filename,
-                'success': prediction.get('status') == 'complete',
-                'result': prediction
-            })
+            try:
+                resp = requests.post("http://localhost:8000/api/agent/upload", files=files_binary, headers=headers, timeout=120)
+                resp.raise_for_status()
+                prediction = resp.json()
+                results.append({
+                    'filename': filename,
+                    'success': prediction.get('status') == 'complete',
+                    'result': prediction
+                })
+            except requests.RequestException as e:
+                results.append({
+                    'filename': filename,
+                    'success': False,
+                    'message': f'诊断服务调用失败: {e}'
+                })
         else:
             results.append({
-            'filename': file.filename,
-            'success': False,
-            'message': '不支持的文件格式'
+                'filename': file.filename,
+                'success': False,
+                'message': '不支持的文件格式'
         })
     return jsonify({
         'success': True,

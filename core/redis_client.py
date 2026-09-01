@@ -10,7 +10,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 #创建 Redis 连接池
 redis_pool = aioredis.ConnectionPool.from_url(
     REDIS_URL,
-    encodings="utf-8",
+    encoding="utf-8",
     decode_responses=True,
     max_connections=20
 )

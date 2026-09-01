@@ -1,9 +1,9 @@
 import uuid
 import logging
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, messages_from_dict, message_to_dict
-from Agents.diagnosis_graph import get_graph, get_llm, get_kb  # 导入图实例和LLM工厂函数
+from typing import Optional
+from datetime import timedelta
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, message_to_dict
+from Agents.diagnosis_graph import get_graph, get_llm  # 导入图实例和LLM工厂函数
 from Agents.state import DiagnosisState
 from services.vision_service import analyze_image_from_path  # 导入CV服务
 import json
@@ -125,7 +125,7 @@ class ConversationManager:
         config = {"configurable": {"thread_id": session_id}}
 
         try:
-            final_state = await get_graph.ainvoke(initial_state, config, kb=get_kb())
+            final_state = await get_graph().ainvoke(initial_state, config)
             interrupted = final_state.get("__interrupt__")
             if interrupted:
                 final_state["clarification_questions"] = interrupted[0].value.get("questions")
@@ -178,7 +178,7 @@ class ConversationManager:
 
         config = {"configurable": {"thread_id": session_id}}
         try:
-            result = await get_graph.ainvoke(state, config, kb=get_kb())
+            result = await get_graph().ainvoke(state, config)
             await self._save_session(session_id, result)
             logger.info(f"会话 [{session_id}] 澄清处理完成，新动作: {result.get('action')}")
             return result

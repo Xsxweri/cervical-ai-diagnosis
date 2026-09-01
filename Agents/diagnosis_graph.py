@@ -1,5 +1,4 @@
 from typing import Dict, Any, List
-from functools import partial
 from Agents.state import DiagnosisState
 from services.rag_service import MedicalKnowledgeBase
 from pydantic import BaseModel, Field
@@ -142,14 +141,15 @@ async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
 
 
 # ====节点4、RAG检索====
-async def deep_retrieval_agent(state: DiagnosisState, kb: MedicalKnowledgeBase) -> Dict[str, Any]:
+async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
     """中等不确定性时进行深度知识检索"""
+    kb = get_kb()
     loop = asyncio.get_running_loop()
     cv_result = state.get("cv_result", {}) or {}
     classification = cv_result.get("highest_risk", "")
 
     # 1. 基于分类检索
-    class_knowledge = await loop.run_in_executor(None,kb.retrieve_by_classification,classification, k=5)
+    class_knowledge = await loop.run_in_executor(None, kb.retrieve_by_classification,classification, k=5)
 
     # 2. 基于形态学特征检索 (利用现有cell_analyzer)
     cells = cv_result.get("cells", [])
