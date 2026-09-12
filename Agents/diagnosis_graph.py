@@ -106,7 +106,7 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     # 基于细胞特征生成追问问题
     prompt = f'''
-    你是一位病理科AI助手。检测到以下细胞图像的不确定性较高(uncertainty={state["max_uncertainty"]:.3f}),
+    你是一位病理科AI助手。检测到以下细胞图像的不确定性较高(uncertainty= {(state.get("max_uncertainty") or 0.0):.3f}),
     需要向医生/患者追问关键信息以辅助诊断。
 
     检测结果:
@@ -233,15 +233,11 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """
     生成带可解释性的综合报告
-    结合Grad-CAM + 形态学分析 + LLM解释
+    结合形态学分析 + 不确定性 + (可选)RAG医学依据
+    无论是否检索到知识都会生成解释，避免低不确定性病例缺失可解释性
     """
-    if not state.get("retrieved_knowledge"):
-        return {
-            "current_step": "explainable_report",
-            # "is_complete": False
-        }
-
-    cv_results = state.get("cv_result", {})
+    cv_results = state.get("cv_result") or {}
+    knowledge = state.get("retrieved_knowledge") or []
 
     # 构建可解释性上下文
     explain_context = f'''
@@ -252,8 +248,8 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     2. 关键形态特征:
     '''
 
-    for i, cell in enumerate(cv_results.get("cells", [])[:3], 1):
-        morph = cell.get("morphology", {})
+    for i, cell in enumerate((cv_results.get("cells") or [])[:3], 1):
+        morph = cell.get("morphology") or {}
         explain_context += f'''
     细胞{i}:
     - 核质比: {(morph.get("nuclear_cytoplasmic_ratio") or 0.0):.3f}
@@ -263,12 +259,13 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     explain_context += f'''
     3. 不确定性分析: MC Dropout标准差={(state.get("max_uncertainty") or 0.0):.3f}
-
-    4. 医学依据:
     '''
 
-    for doc in state.get("retrieved_knowledge", [])[:3]:
-        explain_context += f'- {doc.get("content","")[:150]}...\n'
+    # 仅当检索到知识时追加医学依据
+    if knowledge:
+        explain_context += '\n  相关医学依据:\n'
+        for doc in knowledge[:3]:
+            explain_context += f'    - {(doc.get("content", "") or "")[:150]}...\n'
 
     explain_prompt = ChatPromptTemplate.from_messages([
         ("system", '''你是一位病理科AI解释专家。请用通俗语言解释AI的诊断逻辑。
@@ -281,15 +278,30 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         ("human", "{context}\n\n请生成可解释性报告。")
     ])
 
-    llm = get_llm()
-    chain = explain_prompt | llm
-    response = await chain.ainvoke({"context": explain_context})
+    # 从检索结果构建参考文献（按 source:page 去重，过滤未知来源）
+    references = []
+    seen = set()
+    for doc in knowledge:
+        source = doc.get("source", "")
+        page = doc.get("page", 0)
+        key = f"{source}:{page}"
+        if key in seen or not source or source == "未知":
+            continue
+        seen.add(key)
+        references.append(f"{source} (第{page}页)")
 
-    # 在原有报告基础上追加可解释性
-    full_report = state.get("diagnosis_report", "") + "\n\n---\n\n【AI诊断逻辑解释】\n" + response.content
+    try:
+        llm = get_llm()
+        chain = explain_prompt | llm
+        response = await chain.ainvoke({"context": explain_context})
+        full_report = (state.get("diagnosis_report") or "") + "\n\n---\n\n【AI诊断逻辑解释】\n" + response.content
+    except Exception as e:
+        print(f"LLM生成可解释性报告失败: {e}")
+        full_report = state.get("diagnosis_report") or ""
 
     return {
         "diagnosis_report": full_report,
+        "references": references,
         "current_step": "explainable_report",
         "is_complete": True
     }
@@ -314,7 +326,7 @@ builder.add_conditional_edges(
     "uncertainty_assessment",
     decision_router,
     {
-        "clarify": "clarification",
+        "clarify": "prepare_clarification",
         "deep_retrieve": "deep_retrieval",
         "direct_report": "generate_report",
         "re_evaluate": "uncertainty_assessment"
