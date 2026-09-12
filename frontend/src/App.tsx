@@ -26,6 +26,7 @@ function App() {
             <Route path="/history" element={<HistoryPage />} />
             <Route path="*" element={<DashboardPage />} />
           </Route>
+          </Route>
         </Routes>
       </BrowserRouter>
     </ToastProvider>

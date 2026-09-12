@@ -177,11 +177,11 @@ class MorphologyTool:
             logger.warning(f"形态分析失败: {e}")
             features = {}
         return {
-            "核细胞质比": round(features.get("nc_ratio", 0), 4),
-            "单元面积": round(features.get("area", 0), 2),
-            "细胞边缘": round(features.get("perimeter", 0), 2),
+            "nuclear_cytoplasmic_ratio": round(features.get("nc_ratio", 0), 4),
+            "area": round(features.get("area", 0), 2),
+            "perimeter": round(features.get("perimeter", 0), 2),
             "circularity": round(features.get("circularity", 0), 4),
-            "解释": self._interpret(features)
+            "interpretation": self._interpret(features)
         }
 
     @staticmethod

@@ -98,7 +98,7 @@ def decision_router(state: DiagnosisState) -> str:
     return state.get("action","direct_report")
 
 # ====节点3、主动追问====
-async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
+async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     """高不确定性时主动追问关键信息"""
     cv_result = state.get("cv_result", {}) or {}
     llm = get_llm()
@@ -118,48 +118,49 @@ async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     '''
 
     result = await structured_llm.ainvoke(prompt)
-
-    # 使用 interrupt 暂停图的执行，并将问题发送给前端/用户
-    # 当用户回复后，图会从这里恢复，并将用户的回复作为 interrupt 的返回值
-    user_response = interrupt({
-        "questions": result.questions,
-        "reasoning": result.reasoning,
-        "message": "诊断不确定性较高，需要补充信息..."
-    })
-
-    # 用户回复后，将用户的回答追加到对话历史中
-    history = state.get("conversation_history", [])
-    history.append(HumanMessage(content=user_response))
-
-    # 返回更新后的状态，并重置 action 为重新评估
     return {
-        "conversation_history": history,
-        "user_query": user_response,
-        "action": "deep_retrieve",
-        "current_step": "clarification_resolved"
+         "clarification_questions": result.questions,
+        "needs_clarification": True,
+        "current_step": "clarification_prepared"
     }
 
+async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """通过 interrupt 暂停图执行，等待用户回答后恢复"""
+    questions = state.get("clarification_questions") or []
+
+    user_response = interrupt({
+        "questions": questions,
+        "message": "检测到高不确定性，需要用户补充信息..."
+    })
+
+    # 将用户回答注入历史和状态
+    history = list(state.get("conversation_history") or [])
+    history.append(HumanMessage(content=str(user_response)))
+
+    return {
+        "conversation_history": history,
+        "user_query": str(user_response),
+        "needs_clarification": False,
+        "action": "re_evaluate",
+        "current_step": "clarification_resolved"
+    }
 
 # ====节点4、RAG检索====
 async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
     """中等不确定性时进行深度知识检索"""
     kb = get_kb()
-    loop = asyncio.get_running_loop()
     cv_result = state.get("cv_result", {}) or {}
     classification = cv_result.get("highest_risk", "")
 
-    # 1. 基于分类检索
-    class_knowledge = await loop.run_in_executor(None, kb.retrieve_by_classification,classification, k=5)
+    tasks =[kb.retrieve_by_classification(classification, k=5)]
 
     # 2. 基于形态学特征检索 (利用现有cell_analyzer)
-    cells = cv_result.get("cells", [])
+    cells = cv_result.get("cells") or []
     if cells:
-        morphology = cells[0].get("morphology", {})
-        morph_knowledge = await loop.run_in_executor(None,kb.retrieve_by_morphology,morphology, k=3)
-    else:
-        morph_knowledge = []
+       tasks.append(kb.retrieve_by_morphology(cells[0].get("morphology") or {}, k=3))
 
-    all_knowledge = class_knowledge + morph_knowledge
+    results = await asyncio.gather(*tasks)
+    all_knowledge = [item for sub in results for item in sub]
 
     return {
         "retrieved_knowledge": all_knowledge,
@@ -169,10 +170,10 @@ async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
 # ====节点5、直接报告====
 async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """低不确定性时直接生成诊断报告"""
-    cv_results = state.get("cv_result", {})
-    cells = cv_results.get("cells", [])
+    cv_results = state.get("cv_result") or {}
+    cells = cv_results.get("cells") or []
     first_cell = cells[0] if cells else {}
-    morphology=first_cell.get("morphology", {})
+    morphology=first_cell.get("morphology") or {}
 
     # 构建诊断上下文
     context = f'''
@@ -180,12 +181,12 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     - 总细胞数: {cv_results.get("total_cells", 0)}
     - 异常细胞数: {cv_results.get("abnormal_cells", 0)}
     - 最高风险分类: {cv_results.get("highest_risk", "")}
-    - 模型置信度: {first_cell.get("confidence", 0):.3f}
-    - 不确定性: {state.get("max_uncertainty", 0):.3f}
+    - 模型置信度: {(first_cell.get("final_confidence") or 0.0):.3f}
+    - 不确定性: {(state.get("max_uncertainty") or 0.0):.3f}
 
     形态学分析:
-    - 核质比: {morphology.get('nuclear_cytoplasmic_ratio', 0):.3f}
-    - 圆形度: {morphology.get('circularity', 0):.3f}
+    - 核质比: {(morphology.get('nuclear_cytoplasmic_ratio') or 0.0):.3f}
+    - 圆形度: {(morphology.get('circularity') or 0.0):.3f}
     '''
 
     report_prompt = ChatPromptTemplate.from_messages([
@@ -211,7 +212,7 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
             "medium": ["建议6个月后复查细胞学", "可考虑HPV检测"],
             "high": ["建议3个月内阴道镜检查", "HPV分型检测,必要时活检"],
             "emergency": ["建议立即阴道镜检查", "尽快预约妇科肿瘤专科, 准备组织病理学检查"]
-        }.get(state["risk_level"], ["建议咨询专业医生"])
+        }.get(state.get("risk_level"), ["建议咨询专业医生"])
 
         return {
             "diagnosis_report": response.content,
@@ -230,10 +231,10 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
 # ====节点6、可解释性报告====
 async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
-    '''
+    """
     生成带可解释性的综合报告
     结合Grad-CAM + 形态学分析 + LLM解释
-    '''
+    """
     if not state.get("retrieved_knowledge"):
         return {
             "current_step": "explainable_report",
@@ -255,13 +256,13 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         morph = cell.get("morphology", {})
         explain_context += f'''
     细胞{i}:
-    - 核质比: {morph.get("nuclear_cytoplasmic_ratio", 0):.3f}
-    - 圆形度: {morph.get("circularity", 0):.3f}
+    - 核质比: {(morph.get("nuclear_cytoplasmic_ratio") or 0.0):.3f}
+    - 圆形度: {(morph.get("circularity") or 0.0):.3f}
     - 解读: {morph.get("interpretation", "")}
     '''
 
     explain_context += f'''
-    3. 不确定性分析: MC Dropout标准差={state.get("max_uncertainty", 0):.3f}
+    3. 不确定性分析: MC Dropout标准差={(state.get("max_uncertainty") or 0.0):.3f}
 
     4. 医学依据:
     '''
@@ -299,6 +300,7 @@ builder = StateGraph(DiagnosisState)
 
 # 添加节点
 builder.add_node("uncertainty_assessment", uncertainty_assessment_agent)
+builder.add_node("prepare_clarification", prepare_clarification_agent)
 builder.add_node("clarification", clarification_agent)
 builder.add_node("deep_retrieval", deep_retrieval_agent)
 builder.add_node("generate_report", generate_report_agent)
@@ -315,7 +317,21 @@ builder.add_conditional_edges(
         "clarify": "clarification",
         "deep_retrieve": "deep_retrieval",
         "direct_report": "generate_report",
-        "re_evaluate": "uncertainty_assessment" # 用户回答后，重新进入评估节点
+        "re_evaluate": "uncertainty_assessment"
+    }
+)
+
+# 问题生成后进入中断节点等待用户回答
+builder.add_edge("prepare_clarification", "clarification")
+
+# 用户回答后重新评估
+builder.add_conditional_edges(
+    "clarification",
+    decision_router,
+    {
+        "re_evaluate": "uncertainty_assessment",
+        "deep_retrieve": "deep_retrieval",
+        "direct_report": "generate_report"
     }
 )
 
@@ -324,9 +340,6 @@ builder.add_edge("deep_retrieval", "generate_report")
 
 # 直接报告后进入可解释性增强
 builder.add_edge("generate_report", "explainable_report")
-
-# # 澄清后结束 (等待用户输入)
-# builder.add_edge("clarification", END)
 
 # 可解释性报告后结束
 builder.add_edge("explainable_report", END)

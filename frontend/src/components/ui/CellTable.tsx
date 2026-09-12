@@ -43,8 +43,8 @@ export default function CellTable({ cells, limit }: Props) {
               <td>
                 <UncertaintyBadge value={cell.uncertainty} showLabel={false} />
               </td>
-              <td>{cell.morphology.核细胞质比}</td>
-              <td className="text-gray-500 max-w-xs truncate">{cell.morphology.解释}</td>
+              <td>{cell.morphology.nuclear_cytoplasmic_ratio}</td>
+              <td className="text-gray-500 max-w-xs truncate">{cell.morphology.interpretation}</td>
             </tr>
           ))}
         </tbody>

@@ -330,20 +330,35 @@ async def agent_upload(
 @app.websocket("/ws/agent/chat/{session_id}")
 async def agent_websocket(websocket: WebSocket, session_id: str):
     await manager.connect(session_id, websocket)
+    conv_manager = get_conversation_manager()
     try:
         while True:
             message = await websocket.receive_text()
-            data = json.loads(message)
-            user_input = data.get("message", "")
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError:
+                await manager.send_progress(session_id, {"type": "error", "message": "消息格式错误，需为 JSON"})
+                continue
+            user_input = (data.get("message") or "").strip()
             if not user_input:
                 await manager.send_progress(session_id, {"type": "error", "message": "消息不能为空"})
                 continue
             await manager.send_progress(session_id, {"type": "stream", "content": "正在分析您的补充信息..."})
 
+        try:
+            answer = await conv_manager.followup_chat(
+                session_id=session_id,
+                user_input=user_input,
+                time_location=build_time_location()
+            )
+            await manager.send_progress(session_id, {"type": "stream", "content": answer})
+            await manager.send_progress(session_id, {"type": "complete"})
+        except Exception as e:
+            await manager.send_progress(session_id, {"type": "error", "message": str(e)})
+
     except WebSocketDisconnect:
         manager.disconnect(session_id)
-    except Exception as e:
-        await manager.send_progress(session_id, {"type": "error", "message": str(e)})
+    except Exception:
         manager.disconnect(session_id)
 
 if __name__ == "__main__":

@@ -29,12 +29,18 @@ langchain>=0.1.0
 langchain-openai>=0.0.5
 langchain-community>=0.0.20
 langgraph>=0.0.26
+langgraph-checkpoint-redis>=0.0.3
 
 # RAG 向量数据库
 chromadb>=0.4.0
+sentence-transformers>=2.7.0
 
 # 文档解析
 pypdf>=4.0.0
 
-# 前端（React用，可选）
-# node 环境单独管理
+# 会话与检查点存储
+redis>=5.0.0
+
+# 可解释性与训练追踪
+scipy>=1.10.0
+tensorboard>=2.15.0

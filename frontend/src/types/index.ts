@@ -3,11 +3,11 @@ export type RiskLevel = 'low' | 'medium' | 'high' | 'emergency';
 
 /** 细胞形态学分析结果 */
 export interface Morphology {
-  核细胞质比: number;
-  单元面积: number;
-  细胞边缘: number;
+  nuclear_cytoplasmic_ratio: number;
+  area: number;
+  perimeter: number;
   circularity: number;
-  解释: string;
+  interpretation: string;
 }
 
 /** 单个细胞的分析结果 */
