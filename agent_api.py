@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body,Request
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from PIL import Image
 from werkzeug.utils import secure_filename
 from functools import lru_cache
-from core.auth import verify_token,create_token
+from core.auth import verify_token, create_token, decode_token
 from werkzeug.security import check_password_hash
 from contextlib import asynccontextmanager
 from Agents.conversation import ConversationManager
@@ -166,18 +166,23 @@ async def login(req: LoginRequest):
 # 批量/压缩分析的资源上限常量
 MAX_BATCH_FILES = 10
 MAX_ZIP_FILES = 20
-MAX_ZIP_UNCOMPRESSED = 200 * 1024 * 1024 #解压后最大200MB
+MAX_SINGLE_FILE = 30 * 1024 * 1024  # 单文件最大30MB
+MAX_ZIP_UNCOMPRESSED = 200 * 1024 * 1024 # 解压后最大200MB
 
 @app.post("/analyze", summary="单张图片双模型分析", dependencies=[Depends(verify_token)])
 @limiter.limit("10/minute")  # 限流：每分钟最多10次请求
 async def analyze_image(request: Request,file: UploadFile = File(...)):
     try:
         data = await file.read()
+        if len(data) > MAX_SINGLE_FILE:
+            raise HTTPException(status_code=413, detail="文件超过30MB限制")
+        validate_file_content(data, file.filename or "", file.content_type)
         image = Image.open(io.BytesIO(data)).convert("RGB")
         return await analyze_pil_image(image)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"图像处理失败: {e}")
-
 
 @app.post("/analyze_batch", summary="多张图片批量分析", dependencies=[Depends(verify_token)])
 @limiter.limit("5/minute")  # 限流：每分钟最多5次请求
@@ -203,6 +208,10 @@ async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
     results = {}
     try:
         zip_bytes = await upload_file.read()
+        if len(zip_bytes) > MAX_ZIP_UNCOMPRESSED:
+            raise HTTPException(status_code=413, detail="ZIP文件过大")
+        if not zip_bytes.startswith(b'PK\x03\x04'):
+            raise HTTPException(status_code=400, detail="文件不是有效的ZIP格式")
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
             valid_ext = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
             infos = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(valid_ext)]
@@ -217,7 +226,9 @@ async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
                 filename = info.filename
                 try:
                     with z.open(filename) as img_file:
-                        image = Image.open(io.BytesIO(img_file.read())).convert("RGB")
+                        img_bytes = img_file.read()
+                    validate_file_content(img_bytes, filename, "image/jpeg")
+                    image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                     results[filename] = await analyze_pil_image(image)
                 except Exception as e:
                     results[filename] = {"错误": str(e), "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
@@ -244,20 +255,19 @@ async def health_check():
 
 # --- FastAPI 路由 ---
 @app.post("/api/agent/followup",dependencies=[Depends(verify_token)])
+@limiter.limit("20/minute")
 async def agent_followup(
-    request: FollowUpRequest,
-    conv_manager: ConversationManager = Depends(get_conversation_manager)
+        request: Request,
+        payload: FollowUpRequest,
+        conv_manager: ConversationManager = Depends(get_conversation_manager)
 ):
     """
     处理诊断完成后的用户追问。
-    注入 <time_location> 上下文以提供基于当前时间（2026-06-27）和地点（温州）的回答。
     """
     try:
-        # 调用 ConversationManager 处理追问，并传入固定的时空上下文
-        # 注意：这里将 time_location 作为参数传入，需要同步修改 conversation.py 中的方法签名
         response = await conv_manager.followup_chat(
-            session_id=request.session_id,
-            user_input=request.message,
+            session_id=payload.session_id,
+            user_input=payload.message,
             time_location=build_time_location()
         )
         return {
@@ -268,6 +278,7 @@ async def agent_followup(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/agent/clarify/{session_id}",dependencies=[Depends(verify_token)])
+@limiter.limit("20/minute")
 async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: ConversationManager = Depends(get_conversation_manager)):
     """
     处理用户对诊断报告的澄清请求。
@@ -285,7 +296,9 @@ async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: C
 
 # 4. 优化后的上传接口
 @app.post("/api/agent/upload", dependencies=[Depends(verify_token)])
+@limiter.limit("10/minute")
 async def agent_upload(
+        request: Request,
         file: UploadFile = File(...),
         conv_manager=Depends(get_conversation_manager)
 ):
@@ -325,10 +338,16 @@ async def agent_upload(
         "questions": result.get("clarification_questions"),
     }
 
-
 # 5. 健壮的 WebSocket 端点
 @app.websocket("/ws/agent/chat/{session_id}")
-async def agent_websocket(websocket: WebSocket, session_id: str):
+async def agent_websocket(websocket: WebSocket, session_id: str, token: str = Query(...)):
+    # 握手前校验 JWT
+    try:
+        decode_token(token)
+    except Exception:
+        await websocket.close(code=4401)  # 4401: 自定义未授权关闭码
+        return
+
     await manager.connect(session_id, websocket)
     conv_manager = get_conversation_manager()
     try:
@@ -355,7 +374,6 @@ async def agent_websocket(websocket: WebSocket, session_id: str):
             await manager.send_progress(session_id, {"type": "complete"})
         except Exception as e:
             await manager.send_progress(session_id, {"type": "error", "message": str(e)})
-
     except WebSocketDisconnect:
         manager.disconnect(session_id)
     except Exception:

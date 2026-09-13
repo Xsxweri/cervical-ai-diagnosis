@@ -98,8 +98,10 @@ export interface WSOptions {
 
 /** 建立 Agent WebSocket 会话 */
 export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
-  const ws = new WebSocket(`${WS_BASE}/ws/agent/chat/${sessionId}`);
-  ws.onmessage = (event) => {
+  const token = getToken();
+  const url = `${WS_BASE}/ws/agent/chat/${sessionId}?token=${encodeURIComponent(token ?? '')}`;
+  const ws = new WebSocket(url);
+   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data) as { type: string; content?: string; message?: string };
       if (msg.type === 'stream' && msg.content) opts.onStream(msg.content);
@@ -107,6 +109,13 @@ export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
       else if (msg.type === 'error') opts.onError?.(msg.message ?? '未知错误');
     } catch {
       /* 忽略非 JSON 消息 */
+    }
+  };
+  // 握手被后端以 4401 关闭时给出明确提示（token 缺失/过期）
+  ws.onclose = (event) => {
+    if (event.code === 4401) {
+      clearToken();
+      opts.onError?.('WebSocket 鉴权失败，请重新登录');
     }
   };
   return ws;
