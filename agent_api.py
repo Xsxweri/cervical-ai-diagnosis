@@ -8,6 +8,9 @@ from typing import List
 import uuid
 import json
 import os
+import logging
+import time
+import asyncio
 
 import io
 import zipfile
@@ -62,6 +65,14 @@ limiter = Limiter(key_func=get_remote_address)
 
 ACCOUNTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "appWeb", 'doctor_accounts.json')
 SERVICE_LOCATION = os.getenv("SERVICE_LOCATION", "未知地点")
+
+logger = logging.getLogger("agent_api")
+audit_logger = logging.getLogger("audit")
+
+# uploads 清理配置：默认文件存活 6 小时，每 30 分钟扫描一次
+UPLOAD_DIR = os.path.abspath("./uploads")
+UPLOAD_MAX_AGE_SECONDS = int(os.getenv("UPLOAD_MAX_AGE_SECONDS", str(6 * 3600)))
+UPLOAD_CLEANUP_INTERVAL = int(os.getenv("UPLOAD_CLEANUP_INTERVAL", "1800"))
 
 # 定义文件头字典
 MAGIC_BYTES:dict[str,list[bytes]] = {
@@ -121,12 +132,40 @@ def build_time_location() -> str:
 def get_conversation_manager():
     return ConversationManager()
 
+def _cleanup_uploads():
+    """删除 uploads/ 中超过 UPLOAD_MAX_AGE_SECONDS 的文件，防止磁盘只增不减"""
+    if not os.path.isdir(UPLOAD_DIR):
+        return
+    now = time.time()
+    for name in os.listdir(UPLOAD_DIR):
+        path = os.path.join(UPLOAD_DIR, name)
+        try:
+            if os.path.isfile(path) and now - os.path.getmtime(path) > UPLOAD_MAX_AGE_SECONDS:
+                os.remove(path)
+        except OSError as e:
+            logger.warning(f"清理上传文件失败 {path}: {e}")
+
+async def _uploads_cleanup_loop():
+    """周期性清理任务，随应用生命周期启动/取消"""
+    while True:
+        try:
+            await asyncio.sleep(UPLOAD_CLEANUP_INTERVAL)
+            await asyncio.to_thread(_cleanup_uploads)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"uploads 清理任务异常: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from Agents.diagnosis_graph import init_checkpoint_store, close_checkpoint_store, init_kb
+    from services.vision_service import get_model_manager
+    await asyncio.to_thread(get_model_manager)
     await init_kb()
     await init_checkpoint_store()
+    cleanup_task = asyncio.create_task(_uploads_cleanup_loop())
     yield
+    cleanup_task.cancel()
     await close_checkpoint_store()
 
 app = FastAPI(title="AI Agent宫颈病理诊断系统", version="2.0", lifespan=lifespan)
@@ -140,6 +179,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# 医疗合规审计日志：记录 IP、方法、路径、状态码、延迟
+@app.middleware("http")
+async def audit_log_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    client_ip = request.client.host if request.client else "unknown"
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        latency = (time.perf_counter() - start) * 1000
+        audit_logger.error(f"{client_ip} {request.method} {request.url.path} 500 {latency:.1f}ms exc={e}")
+        raise
+    latency = (time.perf_counter() - start) * 1000
+    audit_logger.info(f"{client_ip} {request.method} {request.url.path} {response.status_code} {latency:.1f}ms")
+    return response
 
 # === FastAPI 接口 ===
 # 登录接口
