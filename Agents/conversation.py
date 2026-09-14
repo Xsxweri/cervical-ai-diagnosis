@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 SESSION_KEY_PREFIX = "session:"
 _MESSAGE_KEYS = ("messages", "conversation_history")
 
-def _serisalize_state(state: Union[dict,Any]) -> str:
+def _serialize_state(state: Union[dict,Any]) -> str:
     """将 DiagnosisState 序列化为 JSON 字符串，特殊处理 BaseMessage 列表"""
     data = dict(state)
     data.pop("__interrupt__", None)
@@ -63,7 +63,7 @@ class ConversationManager:
         """序列化状态并写入 Redis，同时设置 TTL"""
         key = f"{SESSION_KEY_PREFIX}{session_id}"
         redis_client = await get_redis_client()
-        await redis_client.setex(key, int(self.session_ttl.total_seconds()), _serisalize_state(state))
+        await redis_client.setex(key, int(self.session_ttl.total_seconds()), _serialize_state(state))
 
     async def _load_session(self, session_id: str) -> Optional[dict]:
         """从Redis读取并反序列化状态"""
