@@ -356,7 +356,7 @@ builder.add_edge("generate_report", "explainable_report")
 # 可解释性报告后结束
 builder.add_edge("explainable_report", END)
 
-## 设置 Redis Checkpoint
+# 设置检查点后端
 _checkpointer_cm = AsyncRedisSaver.from_conn_string(REDIS_URL)
 _exit_stack = AsyncExitStack()
 kb: MedicalKnowledgeBase = None
