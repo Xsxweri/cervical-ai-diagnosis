@@ -83,13 +83,14 @@ class DualModelManager:
     @staticmethod
     def _build_classifier(state_dict: dict, num_classes: int) -> CervicalCancerModel:
         """根据 state_dict 自动判断是否使用注意力机制，并构建 CervicalCancerModel"""
-        use_attention = any("attention" in k.lower() for k in state_dict.keys())
+        keys = list(state_dict.keys())
+        use_attention = any(k.startswith("attention.") or ".attention." in k for k in keys)
         attention_type = None
         if use_attention:
-            if any("se" in k.lower() for k in state_dict.keys()):
-                attention_type = "se"
-            elif any("cbam" in k.lower() for k in state_dict.keys()):
+            if any("attention.ca." in k or "attention.sa." in k for k in keys):
                 attention_type = "cbam"
+            elif any("attention.fc." in k for k in keys):
+                attention_type = "se"
         return CervicalCancerModel(
             num_classes=num_classes, pretrained=False, model_type="resnet50",
             use_attention=use_attention, attention_type=attention_type

@@ -44,6 +44,8 @@ class CombinedCervicalCancerDataset(Dataset):
                 'normal_intermediate': 'normal',
                 'normal_superficial': 'normal',
                 'Superficial-Intermediate': 'normal',
+                'Metaplastic': 'normal',
+                'Parabasal': 'normal',
 
                 # Abnormal classes
                 'light_dysplastic': 'abnormal',
@@ -51,9 +53,7 @@ class CombinedCervicalCancerDataset(Dataset):
                 'severe_dysplastic': 'abnormal',
                 'carcinoma_in_situ': 'abnormal',
                 'Dyskeratotic': 'abnormal',
-                'Koilocytotic': 'abnormal',
-                'Metaplastic': 'abnormal',
-                'Parabasal': 'abnormal'
+                'Koilocytotic': 'abnormal'
             }
 
             self.unified_classes = sorted(list(set(self.class_mapping.values())))

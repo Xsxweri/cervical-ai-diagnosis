@@ -1,3 +1,11 @@
+import torch
+import torch._dynamo
+import os
+import uuid
+import json
+import logging
+import time
+import asyncio
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -5,12 +13,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from pydantic import BaseModel as PydanticBaseModel
 from typing import List
-import uuid
-import json
-import os
-import logging
-import time
-import asyncio
 
 import io
 import zipfile
@@ -333,7 +335,7 @@ async def agent_followup(
 
 @app.post("/api/agent/clarify/{session_id}",dependencies=[Depends(verify_token)])
 @limiter.limit("20/minute")
-async def agent_clarify(session_id: str, body: dict = Body(...), conv_manager: ConversationManager = Depends(get_conversation_manager)):
+async def agent_clarify(request: Request, session_id: str, body: dict = Body(...), conv_manager: ConversationManager = Depends(get_conversation_manager)):
     """
     处理用户对诊断报告的澄清请求。
     """
@@ -418,16 +420,16 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = Qu
                 continue
             await manager.send_progress(session_id, {"type": "stream", "content": "正在分析您的补充信息..."})
 
-        try:
-            answer = await conv_manager.followup_chat(
-                session_id=session_id,
-                user_input=user_input,
-                time_location=build_time_location()
-            )
-            await manager.send_progress(session_id, {"type": "stream", "content": answer})
-            await manager.send_progress(session_id, {"type": "complete"})
-        except Exception as e:
-            await manager.send_progress(session_id, {"type": "error", "message": str(e)})
+            try:
+                answer = await conv_manager.followup_chat(
+                    session_id=session_id,
+                    user_input=user_input,
+                    time_location=build_time_location()
+                )
+                await manager.send_progress(session_id, {"type": "stream", "content": answer})
+                await manager.send_progress(session_id, {"type": "complete"})
+            except Exception as e:
+                await manager.send_progress(session_id, {"type": "error", "message": str(e)})
     except WebSocketDisconnect:
         manager.disconnect(session_id)
     except Exception:
