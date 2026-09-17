@@ -23,13 +23,14 @@ def get_llm():
         temperature=0.3,
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("LLM_BASE_URL"),
-        timeout=30.0
+        timeout=120.0,
+        max_retries=3
     )
 
 # 结构化输出模型（替代 json.loads）
 class ClarificationResponse(BaseModel):
     questions: List[str] = Field(description="2-3个追问问题")
-    reasoning: str = Field(description="追问理由")
+    reasoning: str = Field(default="", description="追问理由")
 
 # 阈值常量
 HIGH_UNCERTAINTY = 0.3
@@ -115,11 +116,22 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     - 最高风险: {cv_result.get("highest_risk", "未知")}
 
     请生成2-3个最关键的追问问题, 帮助降低诊断不确定性。
+    并以 JSON 格式输出, 字段为 questions(字符串数组) 和 reasoning(字符串)。
     '''
 
-    result = await structured_llm.ainvoke(prompt)
+    fallback_questions = [
+        "患者年龄及是否有异常阴道出血或接触性出血？",
+        "既往HPV检测结果（是否高危型阳性）及宫颈细胞学筛查史如何？",
+        "是否有宫颈病变治疗史或其他高危因素（如免疫抑制、吸烟）？"
+    ]
+    try:
+        result = await structured_llm.ainvoke(prompt)
+        questions = result.questions or fallback_questions
+    except Exception as e:
+        print(f"LLM生成追问问题失败: {e}")
+        questions = fallback_questions
     return {
-         "clarification_questions": result.questions,
+        "clarification_questions": questions,
         "needs_clarification": True,
         "current_step": "clarification_prepared"
     }
