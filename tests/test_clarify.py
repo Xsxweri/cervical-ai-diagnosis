@@ -37,4 +37,5 @@ async def main():
         assert cl["status"] == "complete", "resume 后未完成"
         print("\n✅ 澄清 / 中断 / Redis 恢复 全路径通过")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -7,6 +7,8 @@ from langgraph.types import Command
 from Agents.diagnosis_graph import get_graph, get_llm  # 导入图实例和LLM工厂函数
 from Agents.state import DiagnosisState
 from services.vision_service import analyze_image_from_path  # 导入CV服务
+from Prompts import render, raw
+from Prompts.clinical_content import FOLLOWUP_FALLBACK
 import json
 from core.redis_client import get_redis_client
 
@@ -199,30 +201,21 @@ class ConversationManager:
 
         # 构建最终的 Prompt
         # 这里将 time_location 插入到了Prompt的最开始部分
-        followup_prompt = f'''{ctx_time_location}
-
-        【角色】你是一位经验丰富的病理科医生助手。
-        【任务】请基于已有的诊断报告回答用户的追问。不要改变原有的诊断结论。
-        【已有诊断摘要】
-        风险等级: {risk_level}
-        报告内容: {report_snippet}...
-        推荐措施: {recommendations}
-    
-        【用户追问】
-        {user_input}
-    
-        【回答要求】
-        1. 结合当前时间和地点给出人性化的解释。
-        2. 如果用户问及具体的医学建议（如“什么时候复查”），请结合报告中的建议回答。
-        3. 如果问题超出了报告范围，请建议用户咨询线下专业医生。
-        4. 保持语气专业且温和。'''
+        followup_prompt = render(
+            "followup_user",
+            time_location=ctx_time_location,
+            risk_level=risk_level,
+            report_snippet=report_snippet,
+            recommendations=recommendations,
+            user_input=user_input,
+        )
 
         # 3. 调用LLM并更新历史
         history = list(state.get("conversation_history") or [])
         history.append(HumanMessage(content=user_input))
 
         messages = [
-            SystemMessage(content="你正在协助医生进行宫颈细胞学诊断报告的解读。"),
+            SystemMessage(content=raw("followup_system")),
             *history,
             HumanMessage(content=followup_prompt)
         ]
@@ -231,7 +224,7 @@ class ConversationManager:
             response = await llm.ainvoke(messages)
         except Exception as e:
             logger.error(f"追问对话失败: {e}")
-            return "抱歉，AI医生暂时无法回答这个问题，请稍后再试。"
+            return FOLLOWUP_FALLBACK
 
         history.append(AIMessage(content=response.content))
         state["conversation_history"] = history

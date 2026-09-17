@@ -10,6 +10,13 @@ from langgraph.types import interrupt
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
+from Prompts import render, raw
+from Prompts.clinical_content import (
+    CLARIFICATION_FALLBACK_QUESTIONS,
+    RECOMMENDATIONS_BY_RISK,
+    RECOMMENDATION_DEFAULT,
+    REPORT_FALLBACK,
+)
 import os
 import asyncio
 from dotenv import load_dotenv
@@ -33,8 +40,8 @@ class ClarificationResponse(BaseModel):
     reasoning: str = Field(default="", description="追问理由")
 
 # 阈值常量
-HIGH_UNCERTAINTY = 0.3
-MEDIUM_UNCERTAINTY = 0.15
+HIGH_UNCERTAINTY = float(os.getenv("HIGH_UNCERTAINTY", "0.06"))
+MEDIUM_UNCERTAINTY = float(os.getenv("MEDIUM_UNCERTAINTY", "0.025"))
 
 # ====节点1、不确定性评估====
 def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
@@ -106,30 +113,20 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     structured_llm = llm.with_structured_output(ClarificationResponse)
 
     # 基于细胞特征生成追问问题
-    prompt = f'''
-    你是一位病理科AI助手。检测到以下细胞图像的不确定性较高(uncertainty= {(state.get("max_uncertainty") or 0.0):.3f}),
-    需要向医生/患者追问关键信息以辅助诊断。
+    prompt = render(
+        "clarification_questions",
+        uncertainty=f"{(state.get('max_uncertainty') or 0.0):.3f}",
+        total_cells=cv_result.get("total_cells", 0),
+        abnormal_cells=cv_result.get("abnormal_cells", 0),
+        highest_risk=cv_result.get("highest_risk", "未知"),
+    )
 
-    检测结果:
-    - 总细胞数: {cv_result.get("total_cells", 0)}
-    - 异常细胞数: {cv_result.get("abnormal_cells", 0)}
-    - 最高风险: {cv_result.get("highest_risk", "未知")}
-
-    请生成2-3个最关键的追问问题, 帮助降低诊断不确定性。
-    并以 JSON 格式输出, 字段为 questions(字符串数组) 和 reasoning(字符串)。
-    '''
-
-    fallback_questions = [
-        "患者年龄及是否有异常阴道出血或接触性出血？",
-        "既往HPV检测结果（是否高危型阳性）及宫颈细胞学筛查史如何？",
-        "是否有宫颈病变治疗史或其他高危因素（如免疫抑制、吸烟）？"
-    ]
     try:
         result = await structured_llm.ainvoke(prompt)
-        questions = result.questions or fallback_questions
+        questions = result.questions or CLARIFICATION_FALLBACK_QUESTIONS
     except Exception as e:
         print(f"LLM生成追问问题失败: {e}")
-        questions = fallback_questions
+        questions = CLARIFICATION_FALLBACK_QUESTIONS
     return {
         "clarification_questions": questions,
         "needs_clarification": True,
@@ -202,14 +199,8 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     '''
 
     report_prompt = ChatPromptTemplate.from_messages([
-        ("system", '''你是一位资深病理科医生。请根据AI分析结果生成诊断报告。
-        报告要求:
-        1. 说明AI检测到的细胞数量和异常比例
-        2. 解释风险等级判断依据
-        3. 给出明确的后续建议 (复查时间、进一步检查项目)
-        4. 说明模型置信度, 建议高不确定性病例人工复核
-        5. 语气专业、客观、安抚患者'''),
-        ("human", "{context}\n\n请生成诊断报告。")
+        ("system", raw("diagnosis_report_system")),
+        ("human", "{context}\n\n请生成面向医生的辅助诊断报告。")
     ])
 
     llm = get_llm()
@@ -219,12 +210,9 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         response = await chain.ainvoke({"context": context})
 
         # 生成建议
-        recommendations = {
-            "low": ["建议1年后常规复查", "保持健康生活方式"],
-            "medium": ["建议6个月后复查细胞学", "可考虑HPV检测"],
-            "high": ["建议3个月内阴道镜检查", "HPV分型检测,必要时活检"],
-            "emergency": ["建议立即阴道镜检查", "尽快预约妇科肿瘤专科, 准备组织病理学检查"]
-        }.get(state.get("risk_level"), ["建议咨询专业医生"])
+        recommendations = RECOMMENDATIONS_BY_RISK.get(
+            state.get("risk_level"), RECOMMENDATION_DEFAULT
+        )
 
         return {
             "diagnosis_report": response.content,
@@ -235,8 +223,8 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     except Exception as e:  # 捕获所有异常
         print(f"LLM生成报告失败: {e}")
         return {
-            "diagnosis_report": "抱歉，AI医生暂时无法生成详细报告，请稍后重试。",
-            "recommendations": ["建议咨询专业医生"],
+            "diagnosis_report": REPORT_FALLBACK,
+            "recommendations": RECOMMENDATION_DEFAULT,
             "current_step": "generate_report",
             "is_complete": True
         }
@@ -252,13 +240,10 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     knowledge = state.get("retrieved_knowledge") or []
 
     # 构建可解释性上下文
-    explain_context = f'''
-    诊断结果: {state.get("diagnosis_report", "")}
-
-    可解释性信息:
-    1. 模型关注区域: AI主要关注细胞的核区域和细胞质边界
-    2. 关键形态特征:
-    '''
+    explain_context = ChatPromptTemplate.from_messages([
+        ("system", raw("explainability_system")),
+        ("human", "{context}\n\n请生成可解释性报告。")
+    ])
 
     for i, cell in enumerate((cv_results.get("cells") or [])[:3], 1):
         morph = cell.get("morphology") or {}
