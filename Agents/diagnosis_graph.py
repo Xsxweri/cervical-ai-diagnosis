@@ -40,12 +40,12 @@ class ClarificationResponse(BaseModel):
     reasoning: str = Field(default="", description="追问理由")
 
 # 阈值常量
-HIGH_UNCERTAINTY = float(os.getenv("HIGH_UNCERTAINTY", "0.06"))
-MEDIUM_UNCERTAINTY = float(os.getenv("MEDIUM_UNCERTAINTY", "0.025"))
+HIGH_UNCERTAINTY = float(os.getenv("HIGH_UNCERTAINTY", "0.09"))
+MEDIUM_UNCERTAINTY = float(os.getenv("MEDIUM_UNCERTAINTY", "0.04"))
 
 # ====节点1、不确定性评估====
 def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
-    '''利用MC Dropout结果评估不确定性'''
+    """利用MC Dropout结果评估不确定性"""
     cv_result = state.get("cv_result", {}) or {}
     max_uncertainty = cv_result.get("max_uncertainty", 0.0)
 
@@ -81,7 +81,7 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
     else:
         # 低不确定性: 直接生成报告
         abnormal_count = cv_result.get("abnormal_cells", 0)
-        total_count = max(cv_result.get("total_cells", 1),1)
+        total_count = max(cv_result.get("total_cells", 1), 1)
         ratio = abnormal_count / total_count
 
         if ratio == 0:
@@ -240,10 +240,13 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     knowledge = state.get("retrieved_knowledge") or []
 
     # 构建可解释性上下文
-    explain_context = ChatPromptTemplate.from_messages([
-        ("system", raw("explainability_system")),
-        ("human", "{context}\n\n请生成可解释性报告。")
-    ])
+    explain_context =  f'''
+    诊断结果: {state.get("diagnosis_report", "")}
+
+    可解释性信息:
+    1. 模型关注区域: AI主要关注细胞的核区域和细胞质边界
+    2. 关键形态特征:
+    '''
 
     for i, cell in enumerate((cv_results.get("cells") or [])[:3], 1):
         morph = cell.get("morphology") or {}
@@ -265,13 +268,7 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
             explain_context += f'    - {(doc.get("content", "") or "")[:150]}...\n'
 
     explain_prompt = ChatPromptTemplate.from_messages([
-        ("system", '''你是一位病理科AI解释专家。请用通俗语言解释AI的诊断逻辑。
-        要求:
-        1. 解释模型"看到了什么"导致这个判断
-        2. 指出哪些形态特征是关键证据
-        3. 说明不确定性来源
-        4. 引用医学文献支持诊断
-        5. 让患者理解但不过度担忧'''),
+        ("system", raw("explainability_system")),
         ("human", "{context}\n\n请生成可解释性报告。")
     ])
 

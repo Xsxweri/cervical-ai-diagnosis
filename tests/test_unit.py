@@ -53,10 +53,13 @@ def test_high_uncertainty_goes_clarify():
 
 def test_low_uncertainty_goes_direct_report():
     out = uncertainty_assessment_agent(
-        {"cv_result": {"max_uncertainty": 0.05, "abnormal_cells": 0, "total_cells": 10}}
+        {"cv_result": {"max_uncertainty": 0.02, "abnormal_cells": 0, "total_cells": 10}}
     )
     assert out["action"] == "direct_report" and out["risk_level"] == "low"
 
+def test_medium_uncertainty_goes_deep_retrieve():
+    out = uncertainty_assessment_agent({"cv_result": {"max_uncertainty": 0.06}})
+    assert out["action"] == "deep_retrieve" and out["risk_level"] == "medium"
 
 # --- 二分类映射修正回归（Metaplastic/Parabasal 应为 normal）---
 def test_binary_mapping_metaplastic_parabasal_normal():
