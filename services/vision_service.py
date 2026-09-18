@@ -15,16 +15,16 @@ import torchvision.transforms as transforms
 # 第三方/项目模块
 from ultralytics import YOLO
 from models.cer_cancer_model import CervicalCancerModel
-from utils.cell_analyzer import analyze_cell_morphology
+from tools.morphology_tool import MorphologyTool
 
 """
 封装说明:
 - 提供同步函数 `analyze_image_from_path(file_path)` 供内部调用
 - 提供 `analyze_pil_image(image)` 供 FastAPI 主服务 agent_api.py 调用
-- 提供 MC Dropout 不确定性估计 (只激活 Dropout 层)
-- 封装形态学分析 Tool (依赖 utils.cell_analyzer.analyze_cell_morphology)
+- 提供 MC Dropout 不确定性估计
 """
-# Logger 配置 (移除 basicConfig，避免与主程序冲突)
+
+# Logger 配置
 logger = logging.getLogger("vision_service")
 
 #配置项(支持环境变量覆盖)
@@ -38,7 +38,7 @@ ABNORMAL_CONF_THRESHOLD = float(os.getenv("ABNORMAL_CONF_THRESHOLD", "0.5"))
 
 # 类别定义
 BINARY_CLASSES = ["normal", "abnormal"]
-MULTICLASS_CLASSES = ["Dyskeratotic","Koilocytotic","Metaplastic","Parabasal","SuperficialIntermediate"]
+MULTICLASS_CLASSES = ["Dyskeratotic", "Koilocytotic", "Metaplastic", "Parabasal", "SuperficialIntermediate"]
 
 class ModelType(str, Enum):
     BINARY = "binary"
@@ -183,35 +183,6 @@ def mc_dropout_predict(model, inputs: torch.Tensor, n_samples: int = 10):
     model.train(was_training)
     preds = np.stack(preds)  # (n_samples, num_classes)
     return preds.mean(axis=0), preds.std(axis=0)
-
-# === 形态学分析 ===
-class MorphologyTool:
-    name = "细胞形态分析仪"
-
-    def run(self, cell_image: Image.Image) -> Dict[str, Any]:
-        try:
-            features = analyze_cell_morphology(cell_image)
-        except Exception as e:
-            logger.warning(f"形态分析失败: {e}")
-            features = {}
-        return {
-            "nuclear_cytoplasmic_ratio": round(features.get("nc_ratio", 0), 4),
-            "area": round(features.get("area", 0), 2),
-            "perimeter": round(features.get("perimeter", 0), 2),
-            "circularity": round(features.get("circularity", 0), 4),
-            "interpretation": self._interpret(features)
-        }
-
-    @staticmethod
-    def _interpret(features: Dict[str, Any]) -> str:
-        nc_ratio = features.get("nc_ratio", 0)
-        circularity = features.get("circularity", 1)
-        if nc_ratio > 0.5:
-            return "核质比增高, 提示细胞异型性"
-        if circularity < 0.7:
-            return "细胞形态不规则, 需警惕"
-        return "形态学特征未见明显异常"
-
 
 # === 核心双模型分析函数 ===
 def _analyze_pil_image_sync(

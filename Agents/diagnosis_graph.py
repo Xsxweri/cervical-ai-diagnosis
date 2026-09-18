@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from Agents.state import DiagnosisState
 from services.rag_service import MedicalKnowledgeBase
 from pydantic import BaseModel, Field
@@ -42,6 +42,9 @@ class ClarificationResponse(BaseModel):
 # 阈值常量
 HIGH_UNCERTAINTY = float(os.getenv("HIGH_UNCERTAINTY", "0.09"))
 MEDIUM_UNCERTAINTY = float(os.getenv("MEDIUM_UNCERTAINTY", "0.04"))
+
+# 可解释性开关：开启后在可解释性节点为异常细胞生成 Grad-CAM（默认关闭，避免额外 GPU 开销）
+ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 # ====节点1、不确定性评估====
 def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
@@ -229,6 +232,41 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
             "is_complete": True
         }
 
+# ====可解释性辅助：Grad-CAM====
+def _compute_gradcam(state: DiagnosisState) -> Optional[Dict[str, Any]]:
+    """为置信度最高的异常细胞生成 Grad-CAM（同步，需放线程池调用）"""
+    try:
+        from PIL import Image
+        from services.vision_service import get_model_manager, ModelType
+        from tools.gradcam_tool import GradCAMTool
+
+        image_path = state.get("image_path")
+        cv_result = state.get("cv_result") or {}
+        cells = cv_result.get("cells") or []
+        if not image_path or not cells:
+            return None
+
+        # 优先选异常细胞中置信度最高者，否则退回全体最高置信度细胞
+        abnormal = [c for c in cells if (c.get("binary_result") or {}).get("class") == "abnormal"]
+        target = max(abnormal or cells, key=lambda c: c.get("final_confidence", 0.0))
+        bbox = target.get("bbox")
+        if not bbox:
+            return None
+
+        with Image.open(image_path) as img:
+            cell_img = img.convert("RGB").crop(tuple(bbox))
+
+        mgr = get_model_manager()
+        model = (
+            mgr.multi_classifier
+            if target.get("model_used") == ModelType.MULTICLASS.value
+            else mgr.binary_classifier
+        )
+        return GradCAMTool(model).run(cell_img)
+    except Exception as e:
+        print(f"Grad-CAM 生成失败: {e}")
+        return None
+
 # ====节点6、可解释性报告====
 async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """
@@ -240,7 +278,7 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     knowledge = state.get("retrieved_knowledge") or []
 
     # 构建可解释性上下文
-    explain_context =  f'''
+    explain_context = f'''
     诊断结果: {state.get("diagnosis_report", "")}
 
     可解释性信息:
@@ -266,6 +304,16 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         explain_context += '\n  相关医学依据:\n'
         for doc in knowledge[:3]:
             explain_context += f'    - {(doc.get("content", "") or "")[:150]}...\n'
+
+    # 可选：Grad-CAM 注意力可解释性（ENABLE_GRADCAM=true 时生成）
+    gradcam_path = None
+    if ENABLE_GRADCAM:
+        gradcam = await asyncio.to_thread(_compute_gradcam, state)
+        if gradcam:
+            gradcam_path = gradcam.get("overlay_path")
+            explain_context += f'''
+       4. 模型注意力(Grad-CAM): {gradcam.get("attention_analysis", "")}
+       '''
 
     explain_prompt = ChatPromptTemplate.from_messages([
         ("system", raw("explainability_system")),
@@ -296,6 +344,7 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     return {
         "diagnosis_report": full_report,
         "references": references,
+        "gradcam_path": gradcam_path,
         "current_step": "explainable_report",
         "is_complete": True
     }

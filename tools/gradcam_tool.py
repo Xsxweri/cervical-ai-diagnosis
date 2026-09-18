@@ -42,26 +42,24 @@ class GradCAMTool:
         self.target_layer = target_layer
         self.gradients = None
         self.activations = None
-        
-        # 注册钩子
-        self._register_hooks()
-    
+
+        # 解析目标层：优先按名称匹配，找不到则回退到最后一个卷积层
+        self.target_module = (
+                dict(self.model.named_modules()).get(self.target_layer)
+                or self._find_last_conv_layer()
+        )
+
     def _register_hooks(self):
-        """注册前向/反向传播钩子"""
+        """注册前向/反向传播钩子，返回句柄列表（调用方负责 remove，避免在常驻模型上泄漏）"""
         def forward_hook(module, input, output):
             self.activations = output.detach()
         
         def backward_hook(module, grad_input, grad_output):
             self.gradients = grad_output[0].detach()
-        
-        # 获取目标层
-        target = dict(self.model.named_modules()).get(self.target_layer)
-        if target is None:
-            # 自动查找最后一个卷积层
-            target = self._find_last_conv_layer()
-        
-        target.register_forward_hook(forward_hook)
-        target.register_full_backward_hook(backward_hook)
+
+        h_fwd = self.target_module.register_forward_hook(forward_hook)
+        h_bwd = self.target_module.register_full_backward_hook(backward_hook)
+        return [h_fwd, h_bwd]
     
     def _find_last_conv_layer(self):
         """自动查找最后一个卷积层"""
@@ -89,34 +87,44 @@ class GradCAMTool:
             }
         """
         import torchvision.transforms as transforms
-        
+        device = next(self.model.parameters()).device
         # 预处理
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-        input_tensor = transform(image).unsqueeze(0)
+        input_tensor = transform(image).unsqueeze(0).to(device)
+
+        was_training = self.model.training
+        handles = self._register_hooks()
+        try:
+            # 前向传播
+            self.model.eval()
+            output = self.model(input_tensor)
         
-        # 前向传播
-        self.model.eval()
-        output = self.model(input_tensor)
+            if target_class is None:
+                target_class = output.argmax(dim=1).item()
         
-        if target_class is None:
-            target_class = output.argmax(dim=1).item()
-        
-        # 反向传播
-        self.model.zero_grad()
-        one_hot = torch.zeros_like(output)
-        one_hot[0, target_class] = 1
-        output.backward(gradient=one_hot, retain_graph=True)
-        
-        # 计算 Grad-CAM
-        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
-        cam = (weights * self.activations).sum(dim=1, squeeze=True)
-        cam = F.relu(cam)
-        cam = cam - cam.min()
-        cam = cam / (cam.max() + 1e-8)
+            # 反向传播
+            self.model.zero_grad()
+            one_hot = torch.zeros_like(output)
+            one_hot[0, target_class] = 1
+            output.backward(gradient=one_hot, retain_graph=True)
+
+            # 计算 Grad-CAM
+            weights = self.gradients.mean(dim=(2, 3), keepdim=True)
+            cam = (weights * self.activations).sum(dim=1, squeeze=True)
+            cam = F.relu(cam)
+            cam = cam - cam.min()
+            cam = cam / (cam.max() + 1e-8)
+
+        finally:
+            # 关键：无论成功与否都移除钩子并复位模型状态，防止在常驻模型上泄漏
+            for h in handles:
+                h.remove()
+            self.model.zero_grad()
+            self.model.train(was_training)
         
         # 生成热力图
         cam_np = cam.cpu().numpy()

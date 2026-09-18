@@ -8,7 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class MorphologyTool:
     """
     LangGraph Tool: 细胞形态学特征分析
@@ -55,9 +54,9 @@ class MorphologyTool:
         
         # 医学解读
         interpretation, risk_indicators = self._medical_interpret(features)
-        
+
         return {
-            "nc_ratio": round(features.get("nc_ratio", 0), 4),
+            "nuclear_cytoplasmic_ratio": round(features.get("nc_ratio", 0), 4),
             "area": round(features.get("area", 0), 2),
             "perimeter": round(features.get("perimeter", 0), 2),
             "circularity": round(features.get("circularity", 0), 4),

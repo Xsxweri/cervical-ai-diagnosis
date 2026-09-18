@@ -123,15 +123,15 @@ class MedicalKnowledgeBase:
 
             # ===形态学特征，细粒度亚型（按病理意义分组）===
             # 感染/反应性改变
-            "im_Dyskeratotic": "角化不良细胞 HPV感染相关细胞学特征 LSIL诊断标准",
-            "im_Koilocytotic": "挖空细胞 非典型角化 鉴别HSIL与反应性改变",
+            "Dyskeratotic": "角化不良细胞 HPV感染相关细胞学特征 LSIL诊断标准",
+            "Koilocytotic": "挖空细胞 非典型角化 鉴别HSIL与反应性改变",
 
             # 化生/良性变异
-            "im_Metaplastic": "鳞状化生细胞 移行区细胞特征 与HSIL鉴别要点",
-            "im_Parabasal": "副基底层细胞 萎缩性阴道炎 低雌激素状态细胞学表现",
+            "Metaplastic": "鳞状化生细胞 移行区细胞特征 与HSIL鉴别要点",
+            "Parabasal": "副基底层细胞 萎缩性阴道炎 低雌激素状态细胞学表现",
 
             # 成熟度分层
-            "im_Superficial-Intermediate": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
+            "SuperficialIntermediate": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
         }
         query = query_map.get(classification)
         if query is None:
