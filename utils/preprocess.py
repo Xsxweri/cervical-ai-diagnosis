@@ -7,7 +7,16 @@ from torchvision import transforms
 from PIL import Image
 import yaml
 import random
-
+import logging
+from utils.label_mapping import (
+    BINARY_CLASSES,
+    BINARY_CLASS_MAPPING,
+    MULTICLASS_CLASSES,
+    MULTICLASS_CLASS_TO_IDX,
+    SIPAKMED_DIR_MAPPING,
+    DEFAULT_LABEL_SPACE,
+    get_multiclass_classes,
+)
 
 def load_config(config_path="configs/default.yaml"):
     """加载配置文件"""
@@ -16,7 +25,7 @@ def load_config(config_path="configs/default.yaml"):
     return config
 
 class CombinedCervicalCancerDataset(Dataset):
-    def __init__(self, datasets_config, transform=None, config=None, classification_mode='binary'):
+    def __init__(self, datasets_config, transform=None, config=None, classification_mode='binary', label_space=None):
         """
         初始化数据集
 
@@ -25,6 +34,7 @@ class CombinedCervicalCancerDataset(Dataset):
             transform: 数据变换
             config: 配置文件
             classification_mode: 分类模式 ('binary' 或 'multiclass')
+            label_space: 多分类标签空间名（'sipakmed' | 'herlev'）；None 时用默认。
         """
         self.transform = transform
         self.config = config or load_config()
@@ -38,43 +48,35 @@ class CombinedCervicalCancerDataset(Dataset):
 
         if self.classification_mode == 'binary':
             # 定义统一的类别映射（二分类）
-            self.class_mapping = {
-                # Normal classes
-                'normal_columnar': 'normal',
-                'normal_intermediate': 'normal',
-                'normal_superficial': 'normal',
-                'Superficial-Intermediate': 'normal',
-                'Metaplastic': 'normal',
-                'Parabasal': 'normal',
+            self.label_space = None
+            self.class_mapping = dict(BINARY_CLASS_MAPPING)
 
-                # Abnormal classes
-                'light_dysplastic': 'abnormal',
-                'moderate_dysplastic': 'abnormal',
-                'severe_dysplastic': 'abnormal',
-                'carcinoma_in_situ': 'abnormal',
-                'Dyskeratotic': 'abnormal',
-                'Koilocytotic': 'abnormal'
-            }
-
-            self.unified_classes = sorted(list(set(self.class_mapping.values())))
+            #索引 0 = abnormal, 1 = normal（权重文件语义）
+            self.unified_classes = list(BINARY_CLASSES)
+            assert set(self.class_mapping.values()) == set(self.unified_classes), (
+                "二分类映射与 canonical 定义不一致："
+                f"{sorted(set(self.class_mapping.values()))} vs {self.unified_classes}"
+            )
             self.class_to_idx = {cls: i for i, cls in enumerate(self.unified_classes)}
             self.target_names = self.unified_classes
 
         else:
-            # 多分类模式：根据数据集动态构建类别索引
-            # SiPaKMeD的5个类别
-            sipakmed_classes = ['Dyskeratotic', 'Koilocytotic', 'Metaplastic', 'Parabasal', 'Superficial-Intermediate']
-            # Herlev的7个类别
-            herlev_classes = ['carcinoma_in_situ', 'light_dysplastic', 'moderate_dysplastic',
-                              'normal_columnar', 'normal_intermediate', 'normal_superficial', 'severe_dysplastic']
-
-            # 合并所有类别（去重排序）
-            all_classes = sorted(list(set(sipakmed_classes + herlev_classes)))
-            self.class_to_idx = {cls: i for i, cls in enumerate(all_classes)}
-            self.target_names = all_classes
+            # 多分类模式：标签空间由 label_space 显式指定（默认 sipakmed 5 类）。
+            # 禁止再用 sorted()/拼接，避免标签空间随数据集组合漂移。
+            self.label_space = label_space or DEFAULT_LABEL_SPACE
+            classes = get_multiclass_classes(self.label_space)
+            self.class_to_idx = {cls: i for i, cls in enumerate(classes)}
+            self.target_names = classes
 
         self.images = []
+        self.skipped_images = {}
         self._load_images(datasets_config)
+    def _record_skipped(self, dataset_type: str, class_name: str, count: int):
+        """记录因不在当前标签空间而被跳过的图像数，用于显式告警/报错"""
+        if count <= 0:
+            return
+        key = f"{dataset_type}/{class_name}"
+        self.skipped_images[key] = self.skipped_images.get(key, 0) + count
 
     def _load_images(self, datasets_config):
         for dataset_info in datasets_config:
@@ -99,18 +101,21 @@ class CombinedCervicalCancerDataset(Dataset):
             elif dataset_type == 'herlev':
                 self._load_herlev_images(root_dir)
 
+        if self.skipped_images:
+            total_skipped = sum(self.skipped_images.values())
+            detail = ", ".join(f"{k}({v})" for k, v in self.skipped_images.items())
+            msg = (f"标签空间 '{self.label_space}' 不包含以下类别的图像，共跳过 "
+                   f"{total_skipped} 张: {detail}")
+            if not self.images:
+                raise ValueError(msg + "；没有任何图像可训练，请检查 label_space 与数据集配置。")
+            logging.warning(msg)
+
     def _load_sipakmed_images(self, root_dir):
         # 加载SIPaKMeD数据集图像
         print(f"Loading SIPaKMeD images from: {root_dir}")
 
         # SIPaKMeD数据集的类别映射
-        sipakmed_class_mapping = {
-            'im_Dyskeratotic': 'Dyskeratotic',
-            'im_Koilocytotic': 'Koilocytotic',
-            'im_Metaplastic': 'Metaplastic',
-            'im_Parabasal': 'Parabasal',
-            'im_Superficial-Intermediate': 'Superficial-Intermediate'
-        }
+        sipakmed_class_mapping = SIPAKMED_DIR_MAPPING
 
         # 遍历所有可能的类别文件夹
         for folder_name in os.listdir(root_dir):
@@ -141,12 +146,12 @@ class CombinedCervicalCancerDataset(Dataset):
 
                 # 遍历文件夹中的所有文件
                 file_count = 0
+                skipped_count = 0
                 for filename in os.listdir(actual_path):
                     file_count += 1
                     if filename.lower().endswith(('.bmp', '.jpg', '.png', '.jpeg')):
                         image_path = os.path.join(actual_path, filename)
                         if self.classification_mode == 'binary':
-                            # 使用映射后的类别
                             if original_class_name in self.class_mapping:
                                 mapped_class = self.class_mapping[original_class_name]
                                 self.images.append((image_path, self.class_to_idx[mapped_class]))
@@ -154,14 +159,16 @@ class CombinedCervicalCancerDataset(Dataset):
                                 if image_count <= 5:
                                     print(f"    Loaded: {image_path}")
                         else:
-                            # 使用原始类别
                             if original_class_name in self.class_to_idx:
                                 self.images.append((image_path, self.class_to_idx[original_class_name]))
                                 image_count += 1
                                 if image_count <= 5:
                                     print(f"    Loaded: {image_path}")
+                            else:
+                                skipped_count += 1
 
-                print(f"  扫描文件数: {file_count}, 找到图像数: {image_count}")
+                self._record_skipped('sipakmed', folder_name, skipped_count)
+                print(f"  扫描文件数: {file_count}, 找到图像数: {image_count}, 跳过: {skipped_count}")
                 print(f"  Found {image_count} images in class: {folder_name} (mapped to {original_class_name})")
 
                 # 如果没有找到图像，打印调试信息
@@ -173,6 +180,7 @@ class CombinedCervicalCancerDataset(Dataset):
     def _load_herlev_images(self, root_dir):
         # 加载Herlev数据集图像
         print(f"Loading Herlev images from: {root_dir}")
+        skipped_count = 0
         for class_name in os.listdir(root_dir):
             class_dir = os.path.join(root_dir, class_name)
             if os.path.isdir(class_dir):
@@ -189,13 +197,16 @@ class CombinedCervicalCancerDataset(Dataset):
                                 if image_count <= 5:  # 只打印前5个文件路径用于调试
                                     print(f"    Loaded: {image_path}")
                         else:
-                            # 使用原始类别
+                            # 多分类：仅当类名在当前标签空间内才加载
                             if class_name in self.class_to_idx:
                                 self.images.append((image_path, self.class_to_idx[class_name]))
                                 image_count += 1
-                                if image_count <= 5:  # 只打印前5个文件路径用于调试
+                                if image_count <= 5:
                                     print(f"    Loaded: {image_path}")
+                            else:
+                                skipped_count += 1
                 print(f"  Found {image_count} images in class: {class_name}")
+                self._record_skipped('herlev', class_name, skipped_count)
 
     def __len__(self):
         return len(self.images)
