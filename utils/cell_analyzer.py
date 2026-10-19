@@ -208,20 +208,26 @@ def analyze_cell_morphology(image):
             features['perimeter'] = perimeter
             features['circularity'] = circularity
 
+            features['nc_ratio'] = 0.0
+            features['nc_ratio_valid'] = False
+
             # 计算核质比
             if cytoplasm_contour is not None:
                 cytoplasmic_area = analyzer._calculate_area(cytoplasm_contour)
-                if cytoplasmic_area > 0:
+                if 0 < area <= cytoplasmic_area:
                     features['nc_ratio'] = area / cytoplasmic_area
-                else:
-                    features['nc_ratio'] = 0
-            else:
-                features['nc_ratio'] = 0
+                    features['nc_ratio_valid'] = True
         else:
             features['area'] = 0
             features['perimeter'] = 0
             features['circularity'] = 0
             features['nc_ratio'] = 0
+            features['nc_ratio_valid'] = False
+
+        # 整体可信度：核分割成功且核质比可计算时才算可靠
+        features['measurement_reliable'] = bool(
+            nucleus_contour is not None and features.get('nc_ratio_valid')
+        )
 
         return features
 
@@ -231,5 +237,7 @@ def analyze_cell_morphology(image):
             'area': 0,
             'perimeter': 0,
             'circularity': 0,
-            'nc_ratio': 0
+            'nc_ratio': 0,
+            'nc_ratio_valid': False,
+            'measurement_reliable': False,
         }

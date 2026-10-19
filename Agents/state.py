@@ -33,6 +33,7 @@ class DiagnosisState(TypedDict, total=False):
 
     # --- 决策层 (Agent) ---
     risk_level: Optional[Literal["pending", "low", "medium", "high", "emergency"]]  #风险等级
+    risk_scope: Optional[Literal["cell", "case"]]  # 风险口径：单细胞提示 / 病例级
     action: Optional[Literal["direct_report", "clarify", "deep_retrieve","re_evaluate"]]  #下一步动作
     clarification_questions: List[str]  #生成的追问问题列表
 

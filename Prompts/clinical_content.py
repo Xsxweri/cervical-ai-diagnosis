@@ -11,6 +11,11 @@ RECOMMENDATIONS_BY_RISK = {
     "emergency": ["尽快行阴道镜检查", "转诊妇科肿瘤专科，准备组织病理学确诊"],
 }
 
+RECOMMENDATION_CELL_SCOPE = [
+    "本次结果仅为单细胞/少细胞层面的提示，不足以代表病例整体风险",
+    "建议扩大视野重新采样或人工镜检复核后再决定随访方案",
+]
+
 RECOMMENDATION_DEFAULT = ["建议结合临床进一步评估并人工镜检复核"]
 
 REPORT_FALLBACK = "AI 辅助报告生成失败，请稍后重试；本例建议直接进行人工镜检复核。"

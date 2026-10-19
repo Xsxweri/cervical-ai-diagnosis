@@ -16,6 +16,7 @@ from core.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 SESSION_KEY_PREFIX = "session:"
+OWNER_KEY_PREFIX = "session_owner:"
 _MESSAGE_KEYS = ("messages", "conversation_history")
 
 def _serialize_state(state: Union[dict,Any]) -> str:
@@ -80,6 +81,33 @@ class ConversationManager:
             logger.error(f"反序列化会话 [{session_id}] 失败: {e}")
             return None
 
+    async def _save_owner(self, session_id: str, owner_id: Optional[str]):
+        """记录会话归属，TTL 与会话一致；供后续越权校验。"""
+        if not owner_id:
+            logger.warning(f"会话 [{session_id}] 未提供操作者身份，跳过归属记录")
+            return
+        redis_client = await get_redis_client()
+        await redis_client.setex(
+            f"{OWNER_KEY_PREFIX}{session_id}",
+            int(self.session_ttl.total_seconds()),
+            str(owner_id),
+        )
+
+    async def _assert_owner(self, session_id: str, requester_id: Optional[str]):
+        """校验会话归属，失败抛 PermissionError（fail-closed）。"""
+        if not requester_id:
+            raise PermissionError("缺少操作者身份，拒绝访问该会话")
+        redis_client = await get_redis_client()
+        owner = await redis_client.get(f"{OWNER_KEY_PREFIX}{session_id}")
+        if owner is None:
+            # 历史会话（本次修复前创建）无归属记录 → 拒绝，避免任意 session_id 越权
+            raise PermissionError(
+                f"会话 [{session_id}] 无归属记录，拒绝访问（请重新发起诊断）")
+        if str(owner) != str(requester_id):
+            logger.warning(
+                f"越权访问会话 [{session_id}]: owner={owner} requester={requester_id}")
+            raise PermissionError("无权访问该会话")
+
     @staticmethod
     def _apply_interrupt(state: dict) -> dict:
         """
@@ -94,7 +122,7 @@ class ConversationManager:
             state["is_complete"] = False
         return state
 
-    async def start_diagnosis(self, image_path: str, session_id:  Optional[str] = None) -> dict :
+    async def start_diagnosis(self, image_path: str, session_id:  Optional[str] = None, owner_id: Optional[str] = None) -> dict :
         """
         启动新诊断流程：执行 CV 分析 -> 初始化状态 -> 触发 Agent 图
 
@@ -135,13 +163,14 @@ class ConversationManager:
         try:
             final_state = self._apply_interrupt(await get_graph().ainvoke(initial_state, config))
             await self._save_session(session_id, final_state)
+            await self._save_owner(session_id, owner_id)
             logger.info(f"会话 [{session_id}] 初始诊断完成，风险等级: {final_state.get('risk_level')}")
             return final_state
         except Exception as e:
             logger.error(f"会话 [{session_id}] Agent流程执行失败: {e}", exc_info=True)
             raise
 
-    async def process_clarification(self, session_id: str, user_input: str) -> dict:
+    async def process_clarification(self, session_id: str, user_input: str, requester_id: Optional[str] = None) -> dict:
         """
         处理用户对澄清问题的回答。
 
@@ -150,6 +179,7 @@ class ConversationManager:
         2. 用 Command(resume=...) 恢复被 interrupt 暂停的图
         3. 用户回答由 clarification 节点写入 conversation_history，此处不重复追加
         """
+        await self._assert_owner(session_id, requester_id)
         state = await self._load_session(session_id)
         if not state:
             raise ValueError(f"会话 [{session_id}] 不存在或已过期")
@@ -168,7 +198,7 @@ class ConversationManager:
             logger.error(f"会话 [{session_id}] 澄清处理失败: {e}", exc_info=True)
             raise
 
-    async def followup_chat(self, session_id: str, user_input: str, time_location: str = "") -> str:
+    async def followup_chat(self, session_id: str, user_input: str, time_location: str = "", requester_id: Optional[str] = None) -> str:
         """
         诊断完成后的自由追问。
         此方法不修改核心诊断状态，仅基于已有信息进行问答。
@@ -177,9 +207,11 @@ class ConversationManager:
             session_id: 会话ID
             user_input: 用户的追问
             time_location: 时空上下文字符串 (可选)
+            requester_id: 请求者ID
         Returns:
             AI的回复文本
         """
+        await self._assert_owner(session_id, requester_id)
         state = await self._load_session(session_id)
         if not state:
             raise ValueError("会话不存在，请重新上传图片开始新的诊断。")

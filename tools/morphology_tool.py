@@ -57,6 +57,8 @@ class MorphologyTool:
 
         return {
             "nuclear_cytoplasmic_ratio": round(features.get("nc_ratio", 0), 4),
+            "nc_ratio_valid": bool(features.get("nc_ratio_valid", False)),
+            "measurement_reliable": bool(features.get("measurement_reliable", False)),
             "area": round(features.get("area", 0), 2),
             "perimeter": round(features.get("perimeter", 0), 2),
             "circularity": round(features.get("circularity", 0), 4),
@@ -65,42 +67,60 @@ class MorphologyTool:
             "raw_features": features
         }
     
+    # 形态学自动测量的免责声明与可信度门槛
+    DISCLAIMER = "（形态学为自动测量结果，仅供辅助参考，不作为诊断依据，请以人工镜检为准）"
+
     def _medical_interpret(self, features: Dict[str, Any]) -> tuple:
-        """生成医学解读和风险指标"""
+        """
+        生成医学解读和风险指标
+
+        设计原则：自动分割结果不可靠时宁可"不下结论"，也不输出带有
+        恶性提示倾向的断言。历史上曾把圆形度偏低的正常细胞判为"高度提示恶性"。
+        """
         interpretation_parts = []
         risk_indicators = []
-        
-        nc_ratio = features.get("nc_ratio", 0)
-        circularity = features.get("circularity", 1)
+
+        nc_ratio = features.get("nc_ratio", 0.0)
+        nc_valid = bool(features.get("nc_ratio_valid", False))
+        circularity = features.get("circularity", 0.0)
         area = features.get("area", 0)
-        
-        # 核质比分析
-        if nc_ratio > 0.7:
-            interpretation_parts.append("核质比显著增高 (>0.7)，高度提示细胞异型性，见于HSIL或鳞癌")
+
+        # 核质比分析：仅在测量可信时才给出倾向性描述
+        if not nc_valid:
+            interpretation_parts.append("核质比无法可靠测量（胞浆自动分割失败），本项不纳入判断")
+            risk_indicators.append("nc_ratio_unreliable")
+        elif nc_ratio > 0.7:
+            interpretation_parts.append(f"核质比偏高（{nc_ratio:.2f}），建议人工复核")
             risk_indicators.append("high_nc_ratio")
         elif nc_ratio > 0.5:
-            interpretation_parts.append("核质比增高 (0.5-0.7)，提示轻-中度异型性，见于LSIL或炎症修复")
+            interpretation_parts.append(
+                f"核质比轻度升高（{nc_ratio:.2f}），可见于炎症、修复或低度病变，需结合镜检")
             risk_indicators.append("elevated_nc_ratio")
         else:
-            interpretation_parts.append("核质比正常 (<0.5)，细胞分化良好")
-        
-        # 圆形度分析
-        if circularity < 0.6:
-            interpretation_parts.append("细胞形态显著不规则，核膜皱褶或呈多形性，高度提示恶性")
-            risk_indicators.append("irregular_shape")
+            interpretation_parts.append(f"核质比未见升高（{nc_ratio:.2f}）")
+
+        # 圆形度分析：阈值式判据在启发式分割下不可靠，只作提示，不下恶性结论
+        if circularity <= 0:
+            interpretation_parts.append("圆形度无法测量")
+            risk_indicators.append("circularity_unreliable")
+        elif circularity < 0.6:
+            interpretation_parts.append(
+                f"轮廓圆形度偏低（{circularity:.2f}），可能受分割质量影响，建议人工复核")
+            risk_indicators.append("low_circularity")
         elif circularity < 0.75:
-            interpretation_parts.append("细胞形态轻度不规则，可见于炎症或低度病变")
+            interpretation_parts.append(f"轮廓轻度不规则（{circularity:.2f}）")
             risk_indicators.append("mild_irregularity")
         else:
-            interpretation_parts.append("细胞形态规则，圆形度良好")
-        
+            interpretation_parts.append(f"轮廓较规则（{circularity:.2f}）")
+
         # 面积分析
-        if area > 5000:  # 阈值根据实际数据调整
-            interpretation_parts.append("细胞体积增大，可见于化生细胞或癌细胞")
+        if area > 5000:
+            interpretation_parts.append("细胞面积偏大")
             risk_indicators.append("enlarged_cell")
-        
+
+        # 整体不可信时显式标注，供下游阻断
+        if not features.get("measurement_reliable", False):
+            risk_indicators.append("morphology_unreliable")
+
+        interpretation_parts.append(self.DISCLAIMER)
         return "；".join(interpretation_parts), risk_indicators
-    
-    async def arun(self, cell_image: Image.Image) -> Dict[str, Any]:
-        """异步版本"""
-        return self.run(cell_image)
