@@ -13,7 +13,7 @@ import {
 import { analyzeBatch, analyzeImage, analyzeZip } from '../libts/api';
 import { addHistory } from '../libts/storage';
 import { calcRisk, classLabel, pct } from '../libts/format';
-import type { CVResult } from '../types';
+import type { CVResult, RiskLevel} from '../types';
 import StatCard from '../components/ui/StatCard';
 import RiskBadge from '../components/ui/RiskBadge';
 import CellTable from '../components/ui/CellTable';
@@ -23,6 +23,12 @@ import ProbabilityBar from '../components/ui/ProbabilityBar';
 import { useToast } from '../components/ui/Toast';
 
 type Mode = 'single' | 'batch' | 'zip';
+
+function pickRisk(result: CVResult): RiskLevel {
+  if (result.risk_level) return result.risk_level;
+  const ratio = result.total_cells ? result.abnormal_cells / result.total_cells : 0;
+  return calcRisk(result.max_uncertainty, ratio);
+}
 
 export default function AnalyzePage() {
   const [mode, setMode] = useState<Mode>('single');
@@ -61,10 +67,7 @@ export default function AnalyzePage() {
       setResults(out);
       const first = Object.values(out)[0];
       if (first && first.total_cells > 0) {
-        const risk = calcRisk(
-          first.max_uncertainty,
-          first.total_cells ? first.abnormal_cells / first.total_cells : 0
-        );
+       const risk = pickRisk(first);
         addHistory({
           id: `${Date.now()}`,
           timestamp: Date.now(),
@@ -176,10 +179,7 @@ export default function AnalyzePage() {
 /* ---------- 单图结果卡片 ---------- */
 function ResultCard({ name, result }: { name: string; result: CVResult }) {
   const [open, setOpen] = useState(false);
-  const risk = calcRisk(
-    result.max_uncertainty,
-    result.total_cells ? result.abnormal_cells / result.total_cells : 0
-  );
+  const risk = pickRisk(result);
 
   if (result.error) {
     return (
@@ -209,7 +209,7 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
         <StatCard icon={Images} label="检测细胞数" value={result.total_cells} tone="primary" />
         <StatCard icon={AlertTriangle} label="异常细胞" value={result.abnormal_cells} tone="danger" />
-        <StatCard icon={Gauge} label="最大不确定性" value={pct(result.max_uncertainty)} tone="warning" />
+        <StatCard icon={Gauge} label={`不确定性(P${result.uncertainty_aggregation?.replace('p', '') ?? '90'})`} value={pct(result.max_uncertainty)} tone="warning" />
         <StatCard icon={Tag} label="最高风险类别" value={classLabel(result.highest_risk)} tone="ai" />
       </div>
 

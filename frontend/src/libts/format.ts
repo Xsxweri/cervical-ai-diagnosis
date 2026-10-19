@@ -14,18 +14,18 @@ export const CLASS_LABELS: Record<string, string> = {
   Koilocytotic: '挖空细胞',
   Metaplastic: '化生细胞',
   Parabasal: '副基底层细胞',
-  SuperficialIntermediate: '浅层中间层细胞',
+  'Superficial-Intermediate': '浅层中间层细胞',
 };
 
 export function classLabel(cls: string): string {
   return CLASS_LABELS[cls] ?? cls;
 }
 
-/** 不确定性 → 三档色调（阈值 0.15 / 0.3） */
+/** 不确定性（归一化熵）→ 三档色调。默认阈值与后端 UNCERTAINTY_HIGH/MEDIUM 一致。 */
 export type UncertaintyTone = 'low' | 'mid' | 'high';
-export function uncertaintyTone(u: number): UncertaintyTone {
-  if (u > 0.3) return 'high';
-  if (u > 0.15) return 'mid';
+export function uncertaintyTone(u: number, thresholds: { high: number; medium: number } = { high: 0.60, medium: 0.30 }, ): UncertaintyTone {
+  if (u > thresholds.high) return 'high';
+  if (u > thresholds.medium) return 'mid';
   return 'low';
 }
 
@@ -36,11 +36,11 @@ export const UNCERTAINTY_META: Record<UncertaintyTone, { label: string; badge: s
 };
 
 /** 风险等级（基于最大不确定性 + 异常占比） */
-export function calcRisk(maxUncertainty: number, abnormalRatio: number): RiskLevel {
-  if (maxUncertainty > 0.3) return 'emergency';
-  if (abnormalRatio >= 0.5) return 'high';
-  if (abnormalRatio > 0) return 'medium';
-  return 'low';
+export function calcRisk(_maxUncertainty: number, abnormalRatio: number): RiskLevel {
+  if (abnormalRatio <= 0) return 'low';
+  if (abnormalRatio < 0.3) return 'medium';
+  if (abnormalRatio < 0.6) return 'high';
+  return 'emergency';
 }
 
 export const RISK_META: Record<

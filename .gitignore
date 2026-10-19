@@ -190,7 +190,7 @@ runs/*/events.out.tfevents.*
 wandb/
 
 # 项目特定：多中心评估临时文件
-**/multicenter_evaluation.json
+# **/multicenter_evaluation.json
 
 # 其他临时文件
 tmp/

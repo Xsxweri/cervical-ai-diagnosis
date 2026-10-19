@@ -55,7 +55,7 @@ export default function DiagnosePage() {
         <ClarificationStep questions={diag.questions} loading={diag.isLoading} onSubmit={diag.submitClarification} />
       )}
       {diag.step === 'report' && (
-        <ReportStep report={diag.report} onChat={diag.startChat} onReset={diag.reset} />
+        <ReportStep report={diag.report} riskLevel={diag.riskLevel} onChat={diag.startChat} onReset={diag.reset} />
       )}
       {diag.step === 'chat' && <ChatStep messages={diag.messages} onSend={diag.sendMessage} onReset={diag.reset} />}
     </div>
@@ -210,14 +210,16 @@ function ClarificationStep({
 /* ---------- 报告步骤 ---------- */
 function ReportStep({
   report,
+  riskLevel,
   onChat,
   onReset,
 }: {
   report: string;
+  riskLevel?: RiskLevel | null;
   onChat: () => void;
   onReset: () => void;
 }) {
-  const risk: RiskLevel = riskFromText(report);
+  const risk: RiskLevel = riskLevel ?? riskFromText(report);
   return (
     <div className="max-w-3xl mx-auto space-y-5 animate-fade-in">
       <div className="card p-6">

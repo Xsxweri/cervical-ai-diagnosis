@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentResponse } from '../types';
+import type { AgentResponse, RiskLevel } from '../types';
 import { agentClarify, agentFollowUp, agentUpload, connectAgentWS } from '../libts/api';
 import { riskFromText } from '../libts/format';
 import { addHistory } from '../libts/storage';
@@ -20,6 +20,7 @@ export function useDiagnosis() {
   const [questions, setQuestions] = useState<string[]>([]);
   const [report, setReport] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const filenameRef = useRef('病例');
 
@@ -49,7 +50,11 @@ export function useDiagnosis() {
   const finishReport = useCallback(
     (res: AgentResponse, filename: string) => {
       const text = res.report ?? '';
+       const backRisk = res.risk_level && res.risk_level !== 'pending'
+          ? res.risk_level
+          : null;
       setReport(text);
+      setRiskLevel(backRisk ?? riskFromText(text));
       setStep('report');
       pushMessage({ role: 'assistant', content: text, type: 'report' });
       addHistory({
@@ -57,7 +62,7 @@ export function useDiagnosis() {
         timestamp: Date.now(),
         filename,
         mode: 'agent',
-        riskLevel: riskFromText(text),
+        riskLevel: backRisk ?? riskFromText(text),
         sessionId: res.session_id,
         reportPreview: text.slice(0, 200),
       });
@@ -153,6 +158,7 @@ export function useDiagnosis() {
     wsRef.current?.close();
     wsRef.current = null;
     setStep('upload');
+    setRiskLevel(null);
     setMessages([]);
     setSessionId(null);
     setQuestions([]);
@@ -168,6 +174,7 @@ export function useDiagnosis() {
     messages,
     questions,
     report,
+    riskLevel,
     isLoading,
     start,
     submitClarification,

@@ -99,8 +99,8 @@ export interface WSOptions {
 /** 建立 Agent WebSocket 会话 */
 export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
   const token = getToken();
-  const url = `${WS_BASE}/ws/agent/chat/${sessionId}?token=${encodeURIComponent(token ?? '')}`;
-  const ws = new WebSocket(url);
+ const url = `${WS_BASE}/ws/agent/chat/${sessionId}`;
+ const ws = new WebSocket(url, token ? ['bearer', token] : ['bearer']);
    ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data) as { type: string; content?: string; message?: string };

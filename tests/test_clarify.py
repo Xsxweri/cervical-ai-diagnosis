@@ -1,8 +1,18 @@
+import os
+import sys
+import pytest
 import httpx, asyncio
 
-BASE = "http://localhost:8000"
-IMG  = r"data\sipakmed\im_Koilocytotic\im_Koilocytotic\001.bmp"
-USER, PWD = "dr_zhang", "Test@12345"
+BASE = os.getenv("TEST_BASE_URL", "http://localhost:8000")
+IMG = os.getenv("TEST_IMAGE", r"data\sipakmed\im_Koilocytotic\im_Koilocytotic\001.bmp")
+USER = os.getenv("TEST_DOCTOR_USER", "")
+PWD = os.getenv("TEST_DOCTOR_PWD", "")
+
+if not USER or not PWD:
+    pytest.skip(
+        "未设置 TEST_DOCTOR_USER / TEST_DOCTOR_PWD，跳过澄清链路集成测试",
+        allow_module_level=True,
+    )
 
 async def main():
     async with httpx.AsyncClient(timeout=180.0) as c:
@@ -22,7 +32,7 @@ async def main():
         up = ur.json()
         print("[upload] status   =", up["status"])
         print("[upload] questions=", up.get("questions"))
-        assert up["status"] == "awaiting_clarification", "未触发澄清：确认 HIGH_UNCERTAINTY=-1.0 且已重启"
+        assert up["status"] == "awaiting_clarification", "未触发澄清：确认 UNCERTAINTY_HIGH=-1.0 且已重启"
         sid = up["session_id"]
 
         cr = await c.post(f"{BASE}/api/agent/clarify/{sid}", headers=h,

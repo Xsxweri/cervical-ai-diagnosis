@@ -104,7 +104,12 @@ Cervix-Cytology-AI-System/
 
 - Python 3.11（推荐 3.10+）
 - Node.js 18+
-- Redis 服务（默认 `redis://localhost:6379/0`）
+- **Redis Stack**（含 RediSearch 与 RedisJSON 模块）
+  LangGraph 的 Redis Checkpointer 需要 `FT.*` / `JSON.*` 命令，普通 Redis 无法满足：
+```bash
+  docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
+  ```
+  应用启动时（`lifespan`）会自动：加载 CV 模型 → 检查/构建 RAG 知识库（语料未变则跳过，见 `knowledge_db/kb_manifest.json`）→ 初始化 Redis 检查点 → 启动上传目录清理任务。任一外部依赖（RAG / Redis）失败只会降级对应功能，不会阻断服务启动。
 - （可选）NVIDIA GPU 与 CUDA，用于加速推理与训练
 
 ### 2. 安装依赖
@@ -131,7 +136,7 @@ LLM_BASE_URL=https://api-inference.modelscope.cn/v1
 模型权重路径
 YOLO_WEIGHTS=runs/detect/cervical_cell_exp4/weights/best.pt
 BINARY_WEIGHTS=outputs/models/best_resnet50_binary_model.pth
-MULTI_WEIGHTS=outputs/models/best_resnet50_multiclass_model.pth
+MULTI_WEIGHTS=outputs/models/best_resnet50_multiclass_sipakmed_model.pth
 
 安全 / 服务配置
 JWT_SECRET_KEY=<强随机密钥，必填>
@@ -139,8 +144,8 @@ REDIS_URL=redis://localhost:6379/0
 CORS_ORIGINS=http://localhost:3000
 
 不确定性阈值
-HIGH_UNCERTAINTY=0.06
-MEDIUM_UNCERTAINTY=0.025
+UNCERTAINTY_HIGH=0.60
+UNCERTAINTY_MEDIUM=0.30
 
 Flask 传统 Web（可选）
 FLASK_SECRET_KEY=your_secret_key_here
@@ -161,7 +166,7 @@ uvicorn agent_api:app --host 0.0.0.0 --port 8000 --reload
 cd frontend
 npm run dev
 
-(可选）启动 Flask 传统 Web 后端（http://127.0.0.1:5001）
+（可选）启动 Flask 传统 Web 后端（http://127.0.0.1:5001）
 python appWeb/app.py
 ```
 
@@ -171,7 +176,7 @@ python appWeb/app.py
 
 ## 🔌 API 接口
 
-所有 `/api/*` 与 `/analyze*` 接口均需 `Authorization: Bearer <JWT>` 头（WebSocket 通过查询参数 `?token=` 传递）。
+所有 `/api/*` 与 `/analyze*` 接口均需 `Authorization: Bearer <JWT>` 头；WebSocket 通过`Sec-WebSocket-Protocol: bearer, <JWT>` 子协议头传递（不再使用 `?token=`）。
 
 | 方法 | 路径 | 说明 | 限流 |
 | --- | --- | --- | --- |
@@ -212,6 +217,15 @@ curl -X POST http://localhost:8000/api/agent/upload
 5. **形态学分析**：计算核质比、圆形度、面积、周长并给出解读。
 
 分类模型（`models/cer_cancer_model.py`）支持 `resnet50 / resnet101 / efficientnet_b0` 主干，可选 **SE** 或 **CBAM** 注意力机制。
+
+## 模型性能（病例级分组划分，可引用）
+
+| 任务 | 指标 | 说明 |
+|---|---|---|
+| 检测（YOLOv8n） | mAP50 **0.986** | SIPaKMeD 单细胞裁剪图；真实视野未验证 |
+| 二分类 | acc **94.59%** / AUC 0.980 | SIPaKMeD + Herlev，1504 病例 |
+| 多分类 SIPaKMeD | acc **92.93%** / macro F1 0.921 | 966 病例，0 泄漏 |
+| 多分类 Herlev | acc **71.14%** | 538 病例；CIN2/CIN3 边界为主要误差源 |
 
 ### 训练命令
 

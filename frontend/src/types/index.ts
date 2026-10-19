@@ -20,6 +20,8 @@ export interface CellResult {
   uncertainty: number;
   probabilities: Record<string, number>;
   morphology: Morphology;
+  uncertainty_metric?: string;
+  uncertainty_std?: number;
 }
 
 /** CV 双模型分析结果（对应 analyze_pil_image 返回值） */
@@ -31,12 +33,20 @@ export interface CVResult {
   max_uncertainty: number;
   needs_clarification: boolean;
   error: string | null;
+  risk_level?: RiskLevel;
+  risk_scope?: 'cell' | 'case';
+  uncertainty_metric?: string;
+  uncertainty_aggregation?: string;
+  uncertainty_thresholds?: { high: number; medium: number };
 }
 
 /** Agent 上传 / 澄清 响应 */
 export interface AgentResponse {
   session_id: string;
   status: 'complete' | 'awaiting_clarification';
+  risk_level?: RiskLevel | 'pending';
+  risk_scope?: 'cell' | 'case';
+  recommendations?: string[];
   report?: string;
   questions?: string[];
 }
