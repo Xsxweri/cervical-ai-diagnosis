@@ -8,7 +8,7 @@ import json
 from typing import List, Dict, Tuple
 import numpy as np
 import cv2
-
+from utils.label_mapping import SIPAKMED_CLASSES
 
 class YOLOProcessor:
     """YOLO格式数据处理工具"""
@@ -18,9 +18,7 @@ class YOLOProcessor:
         Args:
             class_names: 类别名称列表
         """
-        self.class_names = class_names or [
-            'normal', 'abnormal'
-        ]
+        self.class_names = class_names or list(SIPAKMED_CLASSES)
         self.class_to_idx = {name: i for i, name in enumerate(self.class_names)}
         self.idx_to_class = {i: name for name, i in self.class_to_idx.items()}
 

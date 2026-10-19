@@ -1,6 +1,24 @@
 """
-全片影像（WSI）处理器，用于大型宫颈细胞影像
-支持基于补丁的千兆像素图像推断
+全片影像（WSI）处理器 —— **骨架，尚未接入任何调用链**。
+
+后续扩展 WSI 时以此为起点。接线前必须补齐以下缺口：
+
+  1. 读取：SVS 是金字塔 TIFF，`cv2.imread` 无法读取 → 需 openslide-python
+     （Windows 上另需 openslide-bin 提供 DLL）；
+  2. 内存：当前 `cv2.imread` 整片读入，千兆像素图会 OOM → 应按 level 分块 ReadRegion；
+  3. 背景：全片大部分为空白，当前逐块推理浪费 90%+ 算力，且稀释"异常占比"
+     → 需先做组织掩膜（如 Otsu + 面积阈值）；
+  4. 边缘块：`split_image` 会把残片 resize 成 224×224，长宽比失真
+     → 应 padding 或直接丢弃过小块；
+  5. 聚合：`merge_predictions` 对**类别索引**取平均（如 (0+4)/2=2）无语义
+     → 应改为概率投票 / 按 patch 计数；
+  6. 级联：当前只调分类模型，未复用 `services.vision_service` 的二分类+多分类+形态学链路，
+     因此产不出 cells / abnormal_cells，无法喂给 `DiagnosisState`；
+  7. API：`.svs` 目前在 `agent_api.py` 的上传白名单之外（会被 400 拒绝）；
+     接线时需同步放开，并改为异步任务（前端 axios 超时 120s，WSI 必然超时）。
+
+⚠️ 以上完成前，**请勿**把 `.svs` 加进 `agent_api.py` 的 `allowed_exits`——
+   否则用户会拿到难以理解的 500（内部错误编号），而不是明确的"暂不支持"。
 """
 import numpy as np
 import cv2
