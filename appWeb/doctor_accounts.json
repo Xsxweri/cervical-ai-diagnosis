@@ -2,25 +2,25 @@
   {
     "id": 1,
     "username": "dr_zhang",
-    "password_hash": "scrypt:32768:8:1$jr42YCRidAyL0F67$0ba3a0fa7776a5e52ea8a9c5cdfe434cc5345a965aa2c4f8df1eaa23e9cc3e6ab32858e1ac40a0aaff7c8f43e6d7375712815ddf8ec5e720e0f407cd49d0e596",
-    "name": "张医生",
+    "password_hash": "scrypt:32768:8:1$3lKq2k6uMU4AUw8T$03e894f7a5631bcb3786247993887e1a662e2e4d90524b8427a1a361f0dead32855fb64d1526617d08effceebaa0b3a95b2fdfad976ce4b52cd5a82278275448",
+    "name": "示例医生A",
     "department": "妇科",
-    "hospital": "北京协和医院"
+    "hospital": "示例医院甲"
   },
   {
     "id": 2,
     "username": "dr_wang",
-    "password_hash": "scrypt:32768:8:1$zEqNBs4lLW79OTnV$cb5b7f4f258eda298542f5186107d563955737ff3a2b77acd13002c3eab85804b57d71124f6f4e01c9fa8b6e643333f20c754c829f09027428ab3df2070e3efd",
-    "name": "王医生",
+    "password_hash": "scrypt:32768:8:1$L2IuBrbrjuYYzEj4$00f1bc75ccefa94b75fd0c78c83b686be4f38776c450645f768926d66e35e29573cc919a1e879c4d20c677425d35b3bea25950f09e2ebc7e4d5e36c8061fc6a7",
+    "name": "示例医生B",
     "department": "病理科",
-    "hospital": "上海瑞金医院"
+    "hospital": "示例医院乙"
   },
   {
     "id": 3,
     "username": "dr_li",
-    "password_hash": "scrypt:32768:8:1$gLYOxwGMAlTzZ1s5$3ab9bf98d92ff8043099c8579d719ff6a44b05c028047ef654a7e353644e7a9d478d431663219e6f38847217151e71252ad194e20fabaa3fda12a6add128b46f",
-    "name": "李医生",
+    "password_hash": "scrypt:32768:8:1$DJDwOH9QHUPEjD8H$354a6e999e903029e07e0a5cbfec6d8c5a5a19a0c3c865e8445c10a3d386e19f7db6d9e7079a1b4c5dc7f76997adf82ec4423e39a594197a21541ea59a92ba0e",
+    "name": "示例医生C",
     "department": "检验科",
-    "hospital": "广州中山医院"
+    "hospital": "示例医院丙"
   }
 ]

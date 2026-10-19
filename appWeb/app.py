@@ -1,3 +1,11 @@
+"""
+- `doctor_accounts.json` 仍被主服务 `agent_api.py` 用作账号数据源，**不可删除**。
+- 本文件的 Flask Web 界面为早期版本，未支持澄清（clarification）分支：
+  当 `/api/agent/upload` 返回 `status == 'awaiting_clarification'` 时，
+  此处会误报失败。**不需要该界面时请勿启动**。
+- 推荐入口：`frontend/`（React）+ `agent_api.py`（FastAPI）。
+"""
+
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename

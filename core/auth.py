@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
@@ -31,14 +31,15 @@ def decode_token(token: str) -> dict:
     except JWTError:
         raise ValueError("无效的认证凭证")
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security))-> dict:
+def verify_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security))-> dict:
     """验证JWT Token"""
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的认证凭证",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    request.state.requester_id = str(payload.get("uid") or payload.get("sub") or "")
+    return payload
