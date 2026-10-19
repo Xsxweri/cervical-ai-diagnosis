@@ -24,25 +24,36 @@ def quantize_model(model_path, output_path, config):
     """
     print("正在加载模型...")
 
-    # 创建模型实例
-    model = CervicalCancerModel(
-        num_classes=config['model']['num_classes'],
-        pretrained=False,
-        dropout_rate=config['model']['dropout_rate'],
-        model_type=config['model'].get('model_type', 'resnet50')
-    )
-
     # 加载模型权重
     state_dict = torch.load(model_path, map_location='cpu')
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        if k.startswith('module.'):
-            name = k[7:]  # remove 'module.' prefix
-        else:
-            name = k
-        new_state_dict[name] = v
+    state_dict = OrderedDict(
+        (k[7:] if k.startswith('module.') else k, v) for k, v in state_dict.items()
+    )
 
-    model.load_state_dict(new_state_dict)
+    use_attention = any(k.startswith('attention.') or '.attention.' in k for k in state_dict)
+    attention_type = None
+    if use_attention:
+        if any('attention.ca.' in k or 'attention.sa.' in k for k in state_dict):
+            attention_type = 'cbam'
+        elif any('attention.fc.' in k for k in state_dict):
+            attention_type = 'se'
+
+    fc_w = state_dict.get('fc.weight')
+    if fc_w is None:
+        raise KeyError("state_dict 缺少 fc.weight，无法确定类别数")
+    num_classes = int(fc_w.shape[0])
+
+    # 创建模型实例
+    model = CervicalCancerModel(
+        num_classes=num_classes,
+        pretrained=False,
+        dropout_rate=config['model']['dropout_rate'],
+        model_type=CervicalCancerModel.detect_model_type(state_dict),
+        use_attention=use_attention,
+        attention_type=attention_type,
+    )
+
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
 
     print(f"原始模型大小: {os.path.getsize(model_path) / (1024 * 1024):.2f} MB")

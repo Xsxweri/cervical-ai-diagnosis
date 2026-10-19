@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,6 +19,12 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 sys.path.insert(0, project_root)
 
 # 现在可以正常导入项目模块
+from utils.label_mapping import (
+    BINARY_CLASSES, 
+    MULTICLASS_CLASSES, 
+    DEFAULT_LABEL_SPACE, 
+    get_multiclass_classes,
+)
 from utils import create_data_loaders
 # 修改导入，直接使用load_config函数
 from utils.preprocess import load_config
@@ -143,12 +150,32 @@ def get_balanced_sampler(train_loader):
 
     return sampler
 
+def save_classes_sidecar(weights_path: str, classification_mode: str, target_names, label_space=None):
+    """把类别表随权重一起保存，供推理端对齐，消除训练/推理漂移"""
+    sidecar = os.path.splitext(weights_path)[0] + ".classes.json"
+    with open(sidecar, "w", encoding="utf-8") as f:
+        json.dump(
+            {"classification_mode": classification_mode, "label_space": label_space, "classes": list(target_names)},
+            f, ensure_ascii=False, indent=2,
+        )
+
+def build_model_filename(config, classification_mode, label_space=None):
+    """
+    统一构造产物文件名，避免不同标签空间互相覆盖。
+
+    - 二分类:  <name>_binary_model.pth
+    - 多分类:  <name>_multiclass_<label_space>_model.pth
+    """
+    name = config['model']['name']
+    if classification_mode == 'binary':
+        return f"{name}_binary_model.pth"
+    return f"{name}_multiclass_{label_space or DEFAULT_LABEL_SPACE}_model.pth"
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler,
                 num_epochs, device, log_dir, model_save_dir, early_stopping_patience=10,
                 use_wandb=False, config=None, use_lr_warmup=False, scheduler_type='plateau',
                 classification_mode='binary', use_mixup=False, mixup_alpha=0.2,
-                use_cutmix=False, cutmix_alpha=1.0, ema=None):
+                use_cutmix=False, cutmix_alpha=1.0, ema=None, target_names=None, label_space=None):
     """训练模型"""
     writer = SummaryWriter(log_dir=log_dir)
     best_acc = 0.0
@@ -300,7 +327,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             if val_acc > best_acc:
                 best_acc = val_acc
             # 生成基于模型类型的文件名
-            model_filename = f"{config['model']['name']}_{classification_mode}_model.pth"
+            model_filename = build_model_filename(config, classification_mode, label_space)
             best_model_path = os.path.join(model_save_dir, f"best_{model_filename}")
 
             # 如果使用EMA，保存EMA模型权重
@@ -310,6 +337,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 ema.restore()
             else:
                 torch.save(model.state_dict(), best_model_path)
+            if target_names is not None:
+                save_classes_sidecar(best_model_path, classification_mode, target_names, label_space=label_space)
         else:
             patience_counter += 1
             if patience_counter >= early_stopping_patience:
@@ -317,7 +346,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 break
 
         # 保存最新模型
-        model_filename = f"{config['model']['name']}_{classification_mode}_model.pth"
+        model_filename = build_model_filename(config, classification_mode, label_space)
         latest_model_path = os.path.join(model_save_dir, f"latest_{model_filename}")
 
         # 如果使用EMA，保存EMA模型权重
@@ -327,6 +356,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             ema.restore()
         else:
             torch.save(model.state_dict(), latest_model_path)
+        if target_names is not None:
+            save_classes_sidecar(latest_model_path, classification_mode, target_names, label_space=label_space)
 
     writer.close()
     return model, train_losses, val_losses, val_accuracies
@@ -386,6 +417,9 @@ def main():
                         help='Use Exponential Moving Average for model weights')
     parser.add_argument('--ema_decay', type=float, default=0.999,
                         help='Decay rate for EMA')
+    parser.add_argument('--label_space', type=str, default=None,
+                        choices=['sipakmed', 'herlev'],help='Multiclass label space (sipakmed=5类 | herlev=7类); '
+                        'None 时读 config["model"]["label_space"]')
 
     args = parser.parse_args()
 
@@ -425,13 +459,18 @@ def main():
     logging.info(f'Using device: {device}')
 
     # 创建数据加载器
-    train_loader, val_loader, test_loader = create_data_loaders(config, args.classification_mode)
+    train_loader, val_loader, test_loader = create_data_loaders(config, args.classification_mode, args.label_space)
 
-    # 根据分类模式设置类别数
+    # 根据分类模式设置类别数量和名称
     if args.classification_mode == 'binary':
-        num_classes = 2
+        num_classes = len(BINARY_CLASSES)
+        target_names = list(BINARY_CLASSES)
+        label_space = None
     else:
-        num_classes = config['model']['num_classes']
+        label_space = args.label_space or (config.get('model') or {}).get('label_space') \
+            or DEFAULT_LABEL_SPACE
+        target_names = get_multiclass_classes(label_space)
+        num_classes = len(target_names)
 
     # 初始化模型
     use_attention = args.attention_type != 'none'
@@ -533,7 +572,9 @@ def main():
         mixup_alpha=args.mixup_alpha,
         use_cutmix=args.use_cutmix,
         cutmix_alpha=args.cutmix_alpha,
-        ema=ema
+        ema=ema,
+        target_names=target_names,
+        label_space=label_space,
     )
 
     # 绘制训练曲线

@@ -4,8 +4,8 @@ torchvision==0.21.0
 opencv-python>=4.5.0
 numpy>=1.21.0
 Pillow>=8.3.0
-Werkzeug>=2.3.0
-ultralytics>=8.0.0
+Werkzeug>=2.3.0,<3.0
+ultralytics>=8.0.0,<8.5
 PyYAML>=6.0
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
@@ -15,6 +15,8 @@ tqdm>=4.65.0
 requests>=2.31.0
 python-jose[cryptography]>=3.3.0
 pydantic>=2.0.0
+plotly>=5.18.0
+kaleido>=0.2.1
 
 #===Agent改造增添需要===
 # FastAPI 异步服务
@@ -32,6 +34,7 @@ langgraph>=0.0.26
 langgraph-checkpoint-redis>=0.0.3
 
 # RAG 向量数据库
+chromadb>=0.4.24
 transformers==4.51.3
 sentence-transformers==3.4.1
 

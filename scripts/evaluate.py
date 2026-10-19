@@ -17,7 +17,9 @@ sys.path.insert(0, project_root)
 
 # 现在可以正常导入项目模块
 from utils import create_data_loaders, load_config
+from utils.label_mapping import BINARY_CLASSES, get_multiclass_classes, DEFAULT_LABEL_SPACE
 from models.cer_cancer_model import CervicalCancerModel
+from services.vision_service import mc_dropout_predict
 
 
 class EMA:
@@ -50,24 +52,6 @@ class EMA:
             if param.requires_grad:
                 param.data = self.backup[name]
         self.backup = {}
-
-
-def mc_dropout_predict(model, inputs, n_samples=10):
-    """蒙特卡洛Dropout预测"""
-    model.train()  # 保持Dropout开启
-    predictions = []
-
-    with torch.no_grad():
-        for _ in range(n_samples):
-            output = model(inputs)
-            prob = F.softmax(output, dim=1)
-            predictions.append(prob.cpu().numpy())
-
-    predictions = np.array(predictions)
-    mean_pred = np.mean(predictions, axis=0)
-    std_pred = np.std(predictions, axis=0)
-    return mean_pred, std_pred
-
 
 def evaluate_model_with_uncertainty(model, test_loader, device, num_classes, num_mc_samples=10):
     """使用蒙特卡洛Dropout进行模型评估以估计不确定性"""
@@ -193,57 +177,16 @@ def plot_roc_curves(labels, probs, num_classes, target_names, save_path):
     plt.close()
 
 
-def get_target_names(num_classes, classification_mode):
+def get_target_names(num_classes, classification_mode, label_space=None):
     """获取类别名称"""
     if classification_mode == 'binary':
-        return ['abnormal', 'normal']
-    else:
-        all_target_names = [
-            'carcinoma_in_situ', 'light_dysplastic', 'moderate_dysplastic',
-            'normal_columnar', 'normal_intermediate', 'normal_superficial', 'severe_dysplastic'
-        ]
-        if num_classes <= len(all_target_names):
-            return all_target_names[:num_classes]
-        else:
-            return [f"Class_{i}" for i in range(num_classes)]
+        return list(BINARY_CLASSES)
+    return get_multiclass_classes(label_space or DEFAULT_LABEL_SPACE)
 
 
-def detect_model_type_from_state_dict(state_dict_keys):
-    """从state_dict的键名中检测模型类型"""
-    keys = list(state_dict_keys)
-
-    # ViT: 有 patch_embed, blocks, cls_token 等键
-    if any('patch_embed' in k or 'blocks.' in k or 'cls_token' in k for k in keys):
-        return 'vit'
-
-    # EfficientNet: 有 features.0, _bn0 等键
-    if any('features.0.' in k or '_bn0' in k for k in keys):
-        return 'efficientnet_b0'
-
-    # ResNet: 有 layer1, layer4 等键（ResNet都有 conv1，不能作为ViT判断依据！）
-    if any('layer1.' in k for k in keys):
-        # 判断是 ResNet50 还是 ResNet101
-        # ResNet50: layer4 有 3 个 block (layer4.0, layer4.1, layer4.2)
-        # ResNet101: layer4 有 22 个 block
-        layer4_indices = set()
-        for k in keys:
-            if 'layer4.' in k:
-                parts = k.split('.')
-                try:
-                    idx = parts[parts.index('layer4') + 1]
-                    layer4_indices.add(int(idx))
-                except (ValueError, IndexError):
-                    continue
-
-        max_idx = max(layer4_indices) if layer4_indices else -1
-        if max_idx >= 22:
-            return 'resnet101'
-        else:
-            return 'resnet50'
-
-    # 默认 fallback
-    return 'resnet50'
-
+def detect_model_type_from_state_dict(model_state_dict):
+    """从 state_dict 的键名中检测模型类型"""
+    return CervicalCancerModel.detect_model_type(model_state_dict)
 
 def create_model_for_evaluation(model_state_dict, num_classes, config, use_attention, attention_type,
                                 force_model_type=None):
@@ -256,7 +199,7 @@ def create_model_for_evaluation(model_state_dict, num_classes, config, use_atten
         detected_model_type = force_model_type
         print(f"Using specified model type: {detected_model_type}")
     else:
-        detected_model_type = detect_model_type_from_state_dict(state_dict_keys)
+        detected_model_type = detect_model_type_from_state_dict(model_state_dict)
         print(f"Auto-detected model type: {detected_model_type}")
 
     print(f"Creating model: type={detected_model_type}, attention={use_attention}, attn_type={attention_type}")
@@ -283,6 +226,9 @@ def main():
     parser.add_argument('--classification_mode', type=str, default=None,
                         choices=['binary', 'multiclass'],
                         help='Classification mode: binary (normal/abnormal) or multiclass')
+    parser.add_argument('--label_space', type=str, default=None,
+                        choices=['sipakmed', 'herlev'],
+                        help='Multiclass label space; None 时读 config["model"]["label_space"]')
     parser.add_argument('--use_mc_dropout', action='store_true',
                         help='Use Monte Carlo Dropout for uncertainty estimation')
     parser.add_argument('--mc_samples', type=int, default=10,
@@ -297,23 +243,30 @@ def main():
     # 加载配置
     config = load_config(args.config)
 
+     # 先确定分类模式、标签空间与类别数（顺序：config → mode → label_space → num_classes）
+    if args.classification_mode == 'binary' or (
+            args.classification_mode is None and config['classification']['mode'] == 'binary'):
+        classification_mode = 'binary'
+        label_space = None
+        num_classes = len(BINARY_CLASSES)
+    else:
+        classification_mode = 'multiclass'
+        label_space = args.label_space or (config.get('model') or {}).get('label_space') \
+            or DEFAULT_LABEL_SPACE
+        num_classes = len(get_multiclass_classes(label_space))
+
+    target_names = get_target_names(num_classes, classification_mode, label_space)
+    print(f"classification_mode={classification_mode}, label_space={label_space}, "
+          f"num_classes={num_classes}, target_names={target_names}")
+
     # 设置设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 创建数据加载器
-    _, _, test_loader = create_data_loaders(config, args.classification_mode)
-
-    # 根据分类模式设置类别数
-    if args.classification_mode == 'binary' or (
-            args.classification_mode is None and config['classification']['mode'] == 'binary'):
-        num_classes = 2
-        classification_mode = 'binary'
-    else:
-        num_classes = config['model']['num_classes']
-        classification_mode = 'multiclass'
-
-    # 加载模型时检查是否需要启用注意力机制
+    # 加载模型权重
     model_state_dict = torch.load(args.model_path, map_location=device)
+
+    # 创建数据加载器
+    _, _, test_loader = create_data_loaders(config, classification_mode, label_space)
 
     # 检查state_dict中是否包含注意力机制相关的键
     if args.attention_type is not None:
@@ -382,15 +335,12 @@ def main():
     print(f"Max prediction value: {np.max(preds)}")
     print(f"Max label value: {np.max(labels)}")
 
-    # 获取类别名称
-    target_names = get_target_names(num_classes, classification_mode)
-    print(f"Using target names: {target_names}")
-
     # 确保标签值在有效范围内
     if len(unique_labels) > num_classes or np.max(unique_labels) >= num_classes:
-        print(f"Warning: Labels contain values outside expected range [0, {num_classes - 1}]")
-        # 尝试修复标签
-        labels = np.clip(labels, 0, num_classes - 1)
+        raise ValueError(
+            f"标签值超出 [0, {num_classes - 1}]，说明数据集标签空间与 num_classes 不一致，"
+            "拒绝输出误导性指标。请检查 utils/label_mapping.py 与 --classification_mode。"
+        )
 
     # 计算评估指标
     labels_param = list(range(num_classes))
@@ -475,11 +425,22 @@ def main():
     os.makedirs(config['paths']['result_dir'], exist_ok=True)
 
     # 保存混淆矩阵
-    np.save(os.path.join(config['paths']['result_dir'], 'confusion_matrix.npy'), cm)
+    suffix = classification_mode
+    if classification_mode == 'multiclass' and label_space:
+        suffix += f'_{label_space}'
+
+    result_dir = config['paths']['result_dir']
+    os.makedirs(result_dir, exist_ok=True)
+
+    cm_path = os.path.join(result_dir, f'confusion_matrix_{suffix}.npy')
+    np.save(cm_path, cm)
 
     # 保存分类报告
-    with open(os.path.join(config['paths']['result_dir'], 'classification_report.json'), 'w') as f:
+    report_path = os.path.join(result_dir, f'classification_report_{suffix}.json')
+    with open(report_path, 'w') as f:
         json.dump(report, f, indent=4)
+
+    print(f"结果已保存: {report_path}")
 
     # 如果使用蒙特卡洛dropout，保存不确定性信息
     if args.use_mc_dropout:
@@ -498,7 +459,7 @@ def main():
         plot_confusion_matrix(
             cm,
             target_names,
-            os.path.join(config['paths']['result_dir'], 'confusion_matrix.png')
+            os.path.join(result_dir, f'confusion_matrix_{suffix}.png')
         )
     except ImportError:
         print("Warning: Could not import visualization module. Skipping confusion matrix plot.")
@@ -507,7 +468,7 @@ def main():
     if args.plot_roc:
         plot_roc_curves(
             labels, probs, num_classes, target_names,
-            os.path.join(config['paths']['result_dir'], 'roc_curves.png')
+            os.path.join(result_dir, f'roc_curves_{suffix}.png')
         )
 
     print(f"Results saved to: {config['paths']['result_dir']}")

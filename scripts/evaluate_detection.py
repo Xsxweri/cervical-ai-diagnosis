@@ -19,7 +19,12 @@ sys.path.insert(0, project_root)
 
 from ultralytics import YOLO
 import cv2
-
+from utils.label_mapping import (
+    SIPAKMED_CLASSES,
+    SIPAKMED_CLASS_TO_IDX,
+    SIPAKMED_ABNORMAL_CLASSES,
+    SIPAKMED_NORMAL_CLASSES,
+)
 
 class DetectionEvaluator:
     """
@@ -27,19 +32,13 @@ class DetectionEvaluator:
     """
 
     # SiPaKMeD 5类细胞定义
-    CLASS_NAMES = {
-        0: 'Dyskeratotic',
-        1: 'Koilocytotic',
-        2: 'Metaplastic',
-        3: 'Parabasal',
-        4: 'SuperficialIntermediate'
-    }
+    CLASS_NAMES = {i: name for i, name in enumerate(SIPAKMED_CLASSES)}
 
     # 医学分类: 异常 vs 正常
-    ABNORMAL_CLASSES = {0, 1, 2}  # Dyskeratotic, Koilocytotic, Metaplastic
-    NORMAL_CLASSES = {3, 4}        # Parabasal, SuperficialIntermediate
+    ABNORMAL_CLASSES = {SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_ABNORMAL_CLASSES}
+    NORMAL_CLASSES = {SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_NORMAL_CLASSES}
 
-    def __init__(self, model_path: str, conf: float = 0.25, iou: float = 0.45):
+    def __init__(self, model_path: str, conf: float = 0.001, iou: float = 0.7,deploy_conf: float = 0.25, deploy_iou: float = 0.45):
         """
         初始化评估器
 
@@ -49,8 +48,8 @@ class DetectionEvaluator:
             iou: NMS IoU阈值
         """
         self.model = YOLO(model_path)
-        self.conf = conf
-        self.iou = iou
+        self.conf, self.iou = conf, iou  # 评估用
+        self.deploy_conf, self.deploy_iou = deploy_conf, deploy_iou # 统计用
         print(f" 加载模型: {model_path}")
         print(f"   置信度阈值: {conf}, IoU阈值: {iou}")
 
@@ -77,6 +76,7 @@ class DetectionEvaluator:
         )
 
         results = {
+            'eval_params': {'conf': self.conf, 'iou': self.iou}, 
             'mAP50': float(metrics.box.map50),
             'mAP75': float(metrics.box.map75),
             'mAP50_95': float(metrics.box.map),
@@ -120,6 +120,11 @@ class DetectionEvaluator:
         for name, cls_metrics in results['per_class'].items():
             print(f"{name:20s}: P={cls_metrics['precision']:.4f}, R={cls_metrics['recall']:.4f}, AP50={cls_metrics['AP50']:.4f}")
 
+        results['metric_caveat'] = (
+            "SIPaKMeD 单细胞裁剪图,每图1个目标框(≈整图)且无背景干扰；"
+            "mAP50 ≈ mAP75属预期现象,不反映真实多细胞视野的检测能力。"
+        )
+
         return results
 
     def evaluate_abnormal_detection(self, image_dir: str, gt_dir: str = None) -> Dict:
@@ -145,6 +150,7 @@ class DetectionEvaluator:
             return {}
 
         total_stats = {
+            'eval_params': {'deploy_conf': self.deploy_conf, 'deploy_iou': self.deploy_iou},
             'total_images': len(image_paths),
             'total_cells': 0,
             'abnormal_cells': 0,
@@ -155,7 +161,7 @@ class DetectionEvaluator:
 
         for img_path in image_paths:
             # 检测
-            results = self.model(str(img_path), conf=self.conf, verbose=False)[0]
+            results = self.model(str(img_path), conf=self.deploy_conf,iou=self.deploy_iou, verbose=False)[0]
 
             img_stats = {
                 'image': str(img_path.name),
@@ -305,10 +311,10 @@ def main():
                         help='Dataset YAML config for COCO metrics')
     parser.add_argument('--image_dir', type=str,
                         help='Directory of test images for abnormal cell analysis')
-    parser.add_argument('--conf', type=float, default=0.25,
-                        help='Confidence threshold')
-    parser.add_argument('--iou', type=float, default=0.45,
-                        help='NMS IoU threshold')
+    parser.add_argument('--conf', type=float, default=0.001,
+                        help='Confidence threshold (COCO 评估用 0.001;部署推理用 0.25)')
+    parser.add_argument('--iou', type=float, default=0.7,
+                        help='NMS IoU threshold (COCO 评估用 0.7;部署可用 0.45)')
     parser.add_argument('--output', type=str, default='outputs/detection_evaluation.json',
                         help='Output path for evaluation results')
     parser.add_argument('--visualize', action='store_true',
@@ -331,10 +337,20 @@ def main():
     # 收集所有结果
     all_results = {
         'model_path': args.model,
-        'config': {
-            'conf_threshold': args.conf,
-            'iou_threshold': args.iou
-        }
+        'eval_params': {
+            # COCO mAP 评估用低阈值，让 PR 曲线覆盖完整召回区间
+            'coco_conf': args.conf,
+            'coco_iou': args.iou,
+            # 异常细胞统计用部署阈值（模拟真实推理）
+            'deploy_conf': evaluator.deploy_conf,
+            'deploy_iou': evaluator.deploy_iou,
+            # 环境版本：ultralytics 升级会改变默认代次与评估实现
+            'ultralytics_version': __import__('ultralytics').__version__,
+        },
+        'dataset': {
+            'yaml': args.data,
+            'split': 'val',
+        },
     }
 
     # 1. 标准COCO指标
