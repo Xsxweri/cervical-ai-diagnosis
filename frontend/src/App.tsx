@@ -5,6 +5,7 @@ import DiagnosePage from './pages/DiagnosePage';
 import AnalyzePage from './pages/AnalyzePage';
 import HistoryPage from './pages/HistoryPage';
 import LoginPage from './pages/LoginPage';
+import NotFoundPage from './pages/NotFoundPage';
 import { ToastProvider } from './components/ui/Toast';
 import {getToken} from './libts/storage';
 
@@ -24,7 +25,8 @@ function App() {
             <Route path="/diagnose" element={<DiagnosePage />} />
             <Route path="/analyze" element={<AnalyzePage />} />
             <Route path="/history" element={<HistoryPage />} />
-            <Route path="*" element={<DashboardPage />} />
+            {/* 未知路径显式提示，不再静默落到仪表盘 */}
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
           </Route>
         </Routes>

@@ -1,22 +1,14 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, X } from 'lucide-react';
-
-type ToastType = 'success' | 'error' | 'info';
+import { ToastContext } from '../../hooks/useToast';
+import type { ToastContextValue, ToastType } from '../../hooks/useToast';
 
 interface ToastItem {
   id: number;
   type: ToastType;
   message: string;
 }
-
-interface ToastContextValue {
-  success: (msg: string) => void;
-  error: (msg: string) => void;
-  info: (msg: string) => void;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
 
 const ICONS: Record<ToastType, ReactNode> = {
   success: <CheckCircle2 size={18} className="text-success-500 shrink-0" />,
@@ -33,6 +25,15 @@ const BAR: Record<ToastType, string> = {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const idRef = useRef(0);
+  const timersRef = useRef<number[]>([]);
+
+  // 卸载时清理所有自动关闭定时器，避免回调在组件销毁后触发
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((t) => window.clearTimeout(t));
+      timersRef.current = [];
+    };
+  }, []);
 
   const remove = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -42,7 +43,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (type: ToastType, message: string) => {
       const id = ++idRef.current;
       setToasts((prev) => [...prev, { id, type, message }]);
-      setTimeout(() => remove(id), 4000);
+      timersRef.current.push(window.setTimeout(() => remove(id), 4000));
     },
     [remove]
   );
@@ -77,10 +78,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext.Provider>
   );
-}
-
-export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error('useToast 必须在 ToastProvider 内使用');
-  return ctx;
 }

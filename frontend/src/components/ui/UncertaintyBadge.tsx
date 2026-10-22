@@ -1,12 +1,15 @@
 import { UNCERTAINTY_META, pct, uncertaintyTone } from '../../libts/format';
+import type { UncertaintyThresholds } from '../../libts/format';
 
 interface Props {
   value: number;
   showLabel?: boolean;
+  /** 优先使用后端结果里的 uncertainty_thresholds，避免阈值调整后前后端不一致 */
+  thresholds?: UncertaintyThresholds;
 }
 
-export default function UncertaintyBadge({ value, showLabel = true }: Props) {
-  const tone = uncertaintyTone(value);
+export default function UncertaintyBadge({ value, showLabel = true, thresholds }: Props) {
+  const tone = uncertaintyTone(value, thresholds);
   const meta = UNCERTAINTY_META[tone];
   return (
     <div className="flex items-center gap-2">

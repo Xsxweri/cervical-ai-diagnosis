@@ -12,22 +12,35 @@ import {
 } from 'lucide-react';
 import { analyzeBatch, analyzeImage, analyzeZip } from '../libts/api';
 import { addHistory } from '../libts/storage';
-import { calcRisk, classLabel, pct } from '../libts/format';
-import type { CVResult, RiskLevel} from '../types';
+import { calcRisk, classLabel, maxRisk, pct } from '../libts/format';
+import type { UncertaintyThresholds } from '../libts/format';
+import type { CVResult, RiskLevel } from '../types';
 import StatCard from '../components/ui/StatCard';
 import RiskBadge from '../components/ui/RiskBadge';
+import RiskScopeTag from '../components/ui/RiskScopeTag';
 import CellTable from '../components/ui/CellTable';
 import UncertaintyBadge from '../components/ui/UncertaintyBadge';
 import Spinner from '../components/ui/Spinner';
 import ProbabilityBar from '../components/ui/ProbabilityBar';
-import { useToast } from '../components/ui/Toast';
+import { useToast } from '../hooks/useToast';
 
 type Mode = 'single' | 'batch' | 'zip';
 
+/**
+ * 风险判定：优先信任后端的 risk_level；
+ * 但只要"未检出细胞/无法判读"就绝不允许落到"低风险"。
+ */
 function pickRisk(result: CVResult): RiskLevel {
+  if (result.error) return 'unreadable';
+  if (result.interpretable === false) return 'unreadable';
   if (result.risk_level) return result.risk_level;
-  const ratio = result.total_cells ? result.abnormal_cells / result.total_cells : 0;
+  if (!result.total_cells) return 'unreadable';
+  const ratio = result.abnormal_cells / result.total_cells;
   return calcRisk(result.max_uncertainty, ratio);
+}
+
+function isReadable(result: CVResult): boolean {
+  return !result.error && result.interpretable !== false && (result.total_cells ?? 0) > 0;
 }
 
 export default function AnalyzePage() {
@@ -65,18 +78,27 @@ export default function AnalyzePage() {
         out = await analyzeZip(files[0]);
       }
       setResults(out);
-      const first = Object.values(out)[0];
-      if (first && first.total_cells > 0) {
-       const risk = pickRisk(first);
+      // 历史记录必须是整批汇总，不能只取第一张（否则单张结果会被误读为整批结论）
+      const entries = Object.values(out);
+      const readable = entries.filter(isReadable);
+      if (readable.length > 0) {
+        const totalCells = readable.reduce((s, r) => s + (r.total_cells ?? 0), 0);
+        const abnormalCells = readable.reduce((s, r) => s + (r.abnormal_cells ?? 0), 0);
         addHistory({
           id: `${Date.now()}`,
           timestamp: Date.now(),
-          filename: mode === 'batch' ? `批量(${files.length}张)` : files[0].name,
+          filename:
+            mode === 'single'
+              ? files[0].name
+              : `批量(${readable.length}/${entries.length}张)`,
           mode: 'quick',
-          riskLevel: risk,
-          totalCells: first.total_cells,
-          abnormalCells: first.abnormal_cells,
+          riskLevel: maxRisk(readable.map(pickRisk)),
+          riskScope: readable.some((r) => r.risk_scope === 'case') ? 'case' : 'cell',
+          totalCells,
+          abnormalCells,
         });
+      } else if (entries.length > 0) {
+        toast.info('所选图像均无法判读，未写入历史');
       }
       toast.success('分析完成');
     } catch (e) {
@@ -132,14 +154,18 @@ export default function AnalyzePage() {
           </p>
           {files.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2 justify-center">
-              {files.map((f) => (
-                <span key={f.name} className="badge bg-primary-50 text-primary-700 px-3 py-1.5">
+              {files.map((f, idx) => (
+                <span
+                  key={`${f.name}-${idx}`}
+                  className="badge bg-primary-50 text-primary-700 px-3 py-1.5"
+                >
                   {f.name}
                   <button
                     className="ml-1 text-primary-400 hover:text-primary-700"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setFiles((prev) => prev.filter((x) => x.name !== f.name));
+                      // 按索引删除：同名文件不会被一起移除
+                      setFiles((prev) => prev.filter((_, i) => i !== idx));
                     }}
                   >
                     <X size={13} />
@@ -167,8 +193,8 @@ export default function AnalyzePage() {
 
       {results && !loading && (
         <div className="space-y-5">
-          {Object.entries(results).map(([name, r]) => (
-            <ResultCard key={name} name={name} result={r} />
+          {Object.entries(results).map(([name, r], i) => (
+            <ResultCard key={`${name}-${i}`} name={name} result={r} />
           ))}
         </div>
       )}
@@ -193,12 +219,33 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
     );
   }
 
+  // 未检出细胞 / 无法判读：显式提示，绝不显示成绿色"低风险"
+  if (risk === 'unreadable') {
+    return (
+      <div className="card p-5 border-warning-200 bg-warning-50/40 animate-fade-in">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="font-medium text-gray-800 truncate">{name}</p>
+            <RiskBadge level="unreadable" />
+          </div>
+        </div>
+        <p className="text-sm text-warning-800 mt-2">
+          {result.unreadable_reason ?? '未检测到可判读的宫颈细胞，本图无法给出风险分级。'}
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
+          请确认图像为细胞学视野、清晰度足够，且未为大面积空白或非细胞内容。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="card p-5 animate-fade-in">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <p className="font-medium text-gray-800 truncate">{name}</p>
           <RiskBadge level={risk} />
+          <RiskScopeTag scope={result.risk_scope} level={risk} />
         </div>
         <button className="btn-ghost text-xs shrink-0" onClick={() => setOpen((v) => !v)}>
           <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -215,9 +262,12 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
 
       {open && (
         <div className="mt-5 space-y-5">
-          <CellTable cells={result.cells} />
+          <CellTable cells={result.cells} thresholds={result.uncertainty_thresholds} />
           {result.cells.length > 0 && (
-            <ProbabilitySection cells={result.cells} />
+            <ProbabilitySection
+              cells={result.cells}
+              thresholds={result.uncertainty_thresholds}
+            />
           )}
         </div>
       )}
@@ -226,7 +276,13 @@ function ResultCard({ name, result }: { name: string; result: CVResult }) {
 }
 
 /* 每个细胞展示其概率分布 */
-function ProbabilitySection({ cells }: { cells: CVResult['cells'] }) {
+function ProbabilitySection({
+  cells,
+  thresholds,
+}: {
+  cells: CVResult['cells'];
+  thresholds?: UncertaintyThresholds;
+}) {
   return (
     <div className="space-y-2">
       {cells.slice(0, 5).map((cell, i) => (
@@ -235,7 +291,11 @@ function ProbabilitySection({ cells }: { cells: CVResult['cells'] }) {
             <span>细胞 #{i + 1}</span>
             <span className="badge bg-primary-50 text-primary-700">{classLabel(cell.final_class)}</span>
             <span className="ml-auto flex items-center gap-2 text-xs text-gray-400">
-              <UncertaintyBadge value={cell.uncertainty} showLabel={false} />
+              <UncertaintyBadge
+                value={cell.uncertainty}
+                showLabel={false}
+                thresholds={thresholds}
+              />
             </span>
           </summary>
           <div className="mt-3 space-y-1.5">

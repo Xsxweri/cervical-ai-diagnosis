@@ -3,6 +3,8 @@ import { UploadCloud, X } from 'lucide-react';
 
 interface Props {
   onFile: (file: File) => void;
+  /** 用户点 X 移除图片时通知父组件，避免父组件继续持有已移除的文件 */
+  onRemove?: () => void;
   accept?: string;
   maxSizeMB?: number;
   hint?: string;
@@ -10,6 +12,7 @@ interface Props {
 
 export default function ImageDropzone({
   onFile,
+  onRemove,
   accept = 'image/*',
   maxSizeMB = 30,
   hint = '支持 JPG / PNG / BMP，最大 30MB',
@@ -46,7 +49,8 @@ export default function ImageDropzone({
     });
     setError(null);
     if (inputRef.current) inputRef.current.value = '';
-  }, []);
+    onRemove?.();
+  }, [onRemove]);
 
   return (
     <div>

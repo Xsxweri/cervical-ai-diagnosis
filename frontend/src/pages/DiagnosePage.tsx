@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, AlertTriangle, Sparkles, RotateCcw, MessageSquareText, MessageCircle } from 'lucide-react';
+import { Send, AlertTriangle, Sparkles, RotateCcw, MessageSquareText, MessageCircle, X } from 'lucide-react';
 import { useDiagnosis, type ChatMessage } from '../hooks/useDiagnosis';
 import { riskFromText, formatTime } from '../libts/format';
 import type { RiskLevel } from '../types';
 import ImageDropzone from '../components/ui/ImageDropzone';
 import Spinner from '../components/ui/Spinner';
 import RiskBadge from '../components/ui/RiskBadge';
+import RiskScopeTag from '../components/ui/RiskScopeTag';
 
 const STEPS = ['上传图像', 'AI 分析', '报告', '追问'];
 
@@ -14,7 +15,7 @@ export default function DiagnosePage() {
   const [file, setFile] = useState<File | null>(null);
   const stepIndex =
     diag.step === 'upload' ? 0
-    : diag.step === 'analyzing' || diag.step === 'clarification' ? 1
+    : diag.step === 'analyzing' || diag.step === 'clarification' || diag.step === 'unreadable' ? 1
     : diag.step === 'report' ? 2
     : 3;
 
@@ -50,14 +51,34 @@ export default function DiagnosePage() {
       {diag.step === 'upload' && (
         <UploadStep file={file} onFileChange={setFile} onStart={() => file && diag.start(file)} />
       )}
-      {diag.step === 'analyzing' && <AnalyzingStep />}
+      {diag.step === 'analyzing' && <AnalyzingStep onCancel={diag.cancel} />}
       {diag.step === 'clarification' && (
         <ClarificationStep questions={diag.questions} loading={diag.isLoading} onSubmit={diag.submitClarification} />
       )}
-      {diag.step === 'report' && (
-        <ReportStep report={diag.report} riskLevel={diag.riskLevel} onChat={diag.startChat} onReset={diag.reset} />
+      {diag.step === 'unreadable' && (
+        <UnreadableStep
+          message={diag.errorMessage ?? '未检测到可判读的宫颈细胞。'}
+          onReset={diag.reset}
+        />
       )}
-      {diag.step === 'chat' && <ChatStep messages={diag.messages} onSend={diag.sendMessage} onReset={diag.reset} />}
+      {diag.step === 'report' && (
+        <ReportStep
+          report={diag.report}
+          riskLevel={diag.riskLevel}
+          riskScope={diag.riskScope}
+          recommendations={diag.recommendations}
+          onChat={diag.startChat}
+          onReset={diag.reset}
+        />
+      )}
+      {diag.step === 'chat' && (
+        <ChatStep
+          messages={diag.messages}
+          sending={diag.isSending}
+          onSend={diag.sendMessage}
+          onReset={diag.reset}
+        />
+      )}
     </div>
   );
 }
@@ -74,7 +95,8 @@ function UploadStep({
 }) {
   return (
     <div className="max-w-2xl mx-auto space-y-5 animate-fade-in">
-      <ImageDropzone onFile={(f) => onFileChange(f)} />
+      {/* 移除图片时必须同步清空父组件的 file，否则会继续上传已删除的图 */}
+      <ImageDropzone onFile={(f) => onFileChange(f)} onRemove={() => onFileChange(null)} />
       <div className="flex items-center justify-between gap-3">
         {file ? (
           <p className="text-sm text-gray-500 truncate">
@@ -101,7 +123,7 @@ const PIPELINE = [
   'Agent 生成诊断报告',
 ];
 
-function AnalyzingStep() {
+function AnalyzingStep({ onCancel }: { onCancel: () => void }) {
   const [idx, setIdx] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => {
@@ -138,6 +160,12 @@ function AnalyzingStep() {
             </div>
           ))}
         </div>
+        <p className="text-xs text-gray-400">
+          进度为阶段提示，实际耗时取决于图像复杂度与服务器负载
+        </p>
+        <button className="btn-secondary" onClick={onCancel}>
+          <X size={15} /> 取消分析
+        </button>
       </div>
     </div>
   );
@@ -207,15 +235,47 @@ function ClarificationStep({
   );
 }
 
+/* ---------- 不可判读步骤 ---------- */
+function UnreadableStep({ message, onReset }: { message: string; onReset: () => void }) {
+  return (
+    <div className="max-w-2xl mx-auto space-y-5 animate-fade-in">
+      <div className="card p-6 border-warning-200 bg-warning-50/60">
+        <div className="flex items-start gap-3">
+          <AlertTriangle size={20} className="text-warning-600 mt-0.5 shrink-0" />
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-semibold text-warning-800">无法判读</h3>
+              <RiskBadge level="unreadable" />
+            </div>
+            <p className="text-sm text-warning-700 mt-2">{message}</p>
+            <p className="text-xs text-warning-600 mt-2">
+              本次未生成诊断结论，也不会计入诊断历史。
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <button className="btn-primary" onClick={onReset}>
+          <RotateCcw size={16} /> 重新上传图像
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- 报告步骤 ---------- */
 function ReportStep({
   report,
   riskLevel,
+  riskScope,
+  recommendations,
   onChat,
   onReset,
 }: {
   report: string;
   riskLevel?: RiskLevel | null;
+  riskScope?: 'cell' | 'case' | null;
+  recommendations: string[];
   onChat: () => void;
   onReset: () => void;
 }) {
@@ -223,13 +283,31 @@ function ReportStep({
   return (
     <div className="max-w-3xl mx-auto space-y-5 animate-fade-in">
       <div className="card p-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h3 className="font-semibold text-gray-900 text-lg">📝 AI 诊断报告</h3>
-          <RiskBadge level={risk} size="md" />
+          <div className="flex items-center gap-2">
+            <RiskScopeTag scope={riskScope} level={risk} />
+            <RiskBadge level={risk} size="md" />
+          </div>
         </div>
+        {riskScope === 'cell' && (
+          <p className="mb-3 text-sm text-warning-800 bg-warning-50 rounded-lg p-3">
+            本次仅检出少量细胞，风险等级属于<strong>细胞级提示</strong>，不代表病例整体风险。
+          </p>
+        )}
         <div className="whitespace-pre-wrap text-gray-700 leading-relaxed text-[15px] bg-gray-50 rounded-lg p-5">
           {report}
         </div>
+        {recommendations.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs text-gray-400 mb-2">建议</p>
+            <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
+              {recommendations.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap gap-3">
         <button className="btn-primary" onClick={onChat}>
@@ -246,10 +324,12 @@ function ReportStep({
 /* ---------- 追问步骤 ---------- */
 function ChatStep({
   messages,
+  sending,
   onSend,
   onReset,
 }: {
   messages: ChatMessage[];
+  sending: boolean;
   onSend: (input: string) => void;
   onReset: () => void;
 }) {
@@ -261,7 +341,7 @@ function ChatStep({
   }, [messages]);
 
   const send = () => {
-    if (!input.trim()) return;
+    if (!input.trim() || sending) return;
     onSend(input.trim());
     setInput('');
   };
@@ -303,11 +383,15 @@ function ChatStep({
       </div>
 
       <div className="border-t border-gray-100 p-4 bg-gray-50/60 rounded-b-xl">
+        {sending && (
+          <p className="mb-2 text-xs text-primary-600 animate-pulse-soft">AI 正在回答...</p>
+        )}
         <div className="flex gap-2">
           <input
             className="input"
-            placeholder="输入追问内容，Enter 发送..."
+            placeholder={sending ? '请等待当前回答完成...' : '输入追问内容，Enter 发送...'}
             value={input}
+            disabled={sending}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -316,7 +400,11 @@ function ChatStep({
               }
             }}
           />
-          <button className="btn-primary shrink-0" onClick={send} disabled={!input.trim()}>
+          <button
+            className="btn-primary shrink-0"
+            onClick={send}
+            disabled={!input.trim() || sending}
+          >
             <Send size={16} />
           </button>
         </div>

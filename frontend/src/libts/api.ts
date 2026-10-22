@@ -16,12 +16,18 @@ http.interceptors.request.use((config) => {
   });
 
 http.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (error.response?.status === 401) clearToken();
-      return Promise.reject(error);
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      clearToken();
+      // 登录请求本身的 401 不跳转（路径已在 /login）；其余视为会话过期
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.replace('/login?expired=1');
+      }
     }
-  );
+    return Promise.reject(error);
+  }
+);
 
 export interface LoginResponse {
   token: string;
@@ -66,10 +72,10 @@ export async function analyzeZip(file: File): Promise<Record<string, CVResult>> 
 }
 
 /** Agent：上传图像并启动诊断 */
-export async function agentUpload(file: File): Promise<AgentResponse> {
+export async function agentUpload(file: File, signal?: AbortSignal): Promise<AgentResponse> {
   const fd = new FormData();
   fd.append('file', file);
-  const { data } = await http.post<AgentResponse>('/api/agent/upload', fd);
+  const { data } = await http.post<AgentResponse>('/api/agent/upload', fd, { signal });
   return data;
 }
 
@@ -99,9 +105,19 @@ export interface WSOptions {
 /** 建立 Agent WebSocket 会话 */
 export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
   const token = getToken();
- const url = `${WS_BASE}/ws/agent/chat/${sessionId}`;
- const ws = new WebSocket(url, token ? ['bearer', token] : ['bearer']);
-   ws.onmessage = (event) => {
+  /**
+   * 关于鉴权方式的说明：
+   * 浏览器提供 Sec-WebSocket-Protocol 子协议时，服务端必须回选其中一个，
+   * 否则按规范握手失败（Chrome: "Sent non-empty 'Sec-WebSocket-Protocol'
+   * header but no response was received"，随后以 1006 关闭）。
+   * 后端握手未回传子协议，因此这里不再发送子协议，改用后端同样支持的
+   * token 查询参数；若后端改为 accept(subprotocol="bearer")，可切回
+   * `new WebSocket(url, ['bearer', token])`。
+   */
+  const base = `${WS_BASE}/ws/agent/chat/${encodeURIComponent(sessionId)}`;
+  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  const ws = new WebSocket(url);
+  ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data) as { type: string; content?: string; message?: string };
       if (msg.type === 'stream' && msg.content) opts.onStream(msg.content);
@@ -111,11 +127,13 @@ export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
       /* 忽略非 JSON 消息 */
     }
   };
-  // 握手被后端以 4401 关闭时给出明确提示（token 缺失/过期）
   ws.onclose = (event) => {
     if (event.code === 4401) {
       clearToken();
       opts.onError?.('WebSocket 鉴权失败，请重新登录');
+    } else if (event.code === 1006) {
+      // 握手/连接异常：不静默，否则用户会误以为流式输出"就是不出现"
+      opts.onError?.('实时通道连接失败，已切换为普通追问模式（无流式输出）');
     }
   };
   return ws;

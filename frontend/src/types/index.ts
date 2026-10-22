@@ -1,9 +1,11 @@
 /** 风险等级 */
-export type RiskLevel = 'low' | 'medium' | 'high' | 'emergency';
+export type RiskLevel = 'low' | 'medium' | 'high' | 'emergency' | 'unreadable';
 
 /** 细胞形态学分析结果 */
 export interface Morphology {
   nuclear_cytoplasmic_ratio: number;
+  nc_ratio_valid?: boolean;
+  measurement_reliable?: boolean;
   area: number;
   perimeter: number;
   circularity: number;
@@ -33,8 +35,10 @@ export interface CVResult {
   max_uncertainty: number;
   needs_clarification: boolean;
   error: string | null;
-  risk_level?: RiskLevel;
-  risk_scope?: 'cell' | 'case';
+  interpretable?: boolean;
+  unreadable_reason?: string | null;
+  risk_level?: RiskLevel | null;
+  risk_scope?: 'cell' | 'case' | null;
   uncertainty_metric?: string;
   uncertainty_aggregation?: string;
   uncertainty_thresholds?: { high: number; medium: number };
@@ -42,13 +46,16 @@ export interface CVResult {
 
 /** Agent 上传 / 澄清 响应 */
 export interface AgentResponse {
-  session_id: string;
-  status: 'complete' | 'awaiting_clarification';
-  risk_level?: RiskLevel | 'pending';
-  risk_scope?: 'cell' | 'case';
+   session_id: string;
+  status: 'complete' | 'awaiting_clarification' | 'unreadable';
+  risk_level?: RiskLevel | 'pending' | null;
+  risk_scope?: 'cell' | 'case' | null;
+  decision_reason?: string | null;
+  clarification_rounds?: number; 
   recommendations?: string[];
   report?: string;
   questions?: string[];
+  error_message?: string | null;
 }
 
 /** Agent HTTP 追问响应 */
@@ -64,7 +71,8 @@ export interface HealthResponse {
   models: { yolo: string; 二分类: string; 多分类: string };
   config: {
     mc_dropout_samples: number;
-    不确定阈值: number;
+    不确定阈值_high: number;
+    不确定阈值_medium: number;
     异常的CONF阈值: number;
   };
 }
@@ -80,6 +88,7 @@ export interface HistoryRecord {
   abnormalCells?: number;
   sessionId?: string;
   reportPreview?: string;
+  riskScope?: 'cell' | 'case' | null;
 }
 
 /** WebSocket 消息 */

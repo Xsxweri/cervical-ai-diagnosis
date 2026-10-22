@@ -4,7 +4,13 @@ import { agentClarify, agentFollowUp, agentUpload, connectAgentWS } from '../lib
 import { riskFromText } from '../libts/format';
 import { addHistory } from '../libts/storage';
 
-export type DiagnosisStep = 'upload' | 'analyzing' | 'clarification' | 'report' | 'chat';
+export type DiagnosisStep =
+  | 'upload'
+  | 'analyzing'
+  | 'clarification'
+  | 'report'
+  | 'unreadable'
+  | 'chat';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -20,8 +26,13 @@ export function useDiagnosis() {
   const [questions, setQuestions] = useState<string[]>([]);
   const [report, setReport] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
+  const [riskScope, setRiskScope] = useState<'cell' | 'case' | null>(null);
+  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const filenameRef = useRef('病例');
 
   const pushMessage = useCallback((msg: Omit<ChatMessage, 'time'>) => {
@@ -50,11 +61,24 @@ export function useDiagnosis() {
   const finishReport = useCallback(
     (res: AgentResponse, filename: string) => {
       const text = res.report ?? '';
-       const backRisk = res.risk_level && res.risk_level !== 'pending'
-          ? res.risk_level
-          : null;
       setReport(text);
-      setRiskLevel(backRisk ?? riskFromText(text));
+      setRecommendations(res.recommendations ?? []);
+      setRiskScope(res.risk_scope ?? null);
+
+      // 无法判读（0 细胞等）：单独一步展示原因，绝不落到"低风险"，也不写历史
+      if (res.status === 'unreadable' || res.error_message) {
+        const reason = res.error_message ?? '未检测到可判读的宫颈细胞，无法生成诊断结论。';
+        setErrorMessage(reason);
+        setRiskLevel('unreadable');
+        setStep('unreadable');
+        pushMessage({ role: 'system', content: `无法判读：${reason}` });
+        return;
+      }
+
+      const backRisk =
+        res.risk_level && res.risk_level !== 'pending' ? res.risk_level : null;
+      const finalRisk = backRisk ?? riskFromText(text);
+      setRiskLevel(finalRisk);
       setStep('report');
       pushMessage({ role: 'assistant', content: text, type: 'report' });
       addHistory({
@@ -62,7 +86,8 @@ export function useDiagnosis() {
         timestamp: Date.now(),
         filename,
         mode: 'agent',
-        riskLevel: backRisk ?? riskFromText(text),
+        riskLevel: finalRisk,
+        riskScope: res.risk_scope ?? null,
         sessionId: res.session_id,
         reportPreview: text.slice(0, 200),
       });
@@ -76,9 +101,14 @@ export function useDiagnosis() {
       filenameRef.current = file.name;
       setStep('analyzing');
       setIsLoading(true);
+      setErrorMessage(null);
+      setRiskScope(null);
+      setRecommendations([]);
       pushMessage({ role: 'system', content: `已上传图像：${file.name}` });
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
-        const res = await agentUpload(file);
+        const res = await agentUpload(file, controller.signal);
         setSessionId(res.session_id);
         if (res.status === 'awaiting_clarification' && res.questions?.length) {
           setQuestions(res.questions);
@@ -91,17 +121,31 @@ export function useDiagnosis() {
           finishReport(res, file.name);
         }
       } catch (e) {
+        // 用户主动取消：回到上传页，不当作失败
+        if (controller.signal.aborted) {
+          setStep('upload');
+          return;
+        }
         pushMessage({
           role: 'system',
           content: `诊断失败：${e instanceof Error ? e.message : '未知错误'}`,
         });
         setStep('upload');
       } finally {
+        if (abortRef.current === controller) abortRef.current = null;
         setIsLoading(false);
       }
     },
     [finishReport, pushMessage]
   );
+
+  /** 取消正在进行的分析 */
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsLoading(false);
+    setStep('upload');
+  }, []);
 
   const submitClarification = useCallback(
     async (answers: string[]) => {
@@ -135,30 +179,40 @@ export function useDiagnosis() {
 
   const sendMessage = useCallback(
     async (input: string) => {
-      if (!sessionId) return;
+      if (!sessionId || isSending) return;
       pushMessage({ role: 'user', content: input });
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ message: input }));
-      } else {
-        try {
-          const resp = await agentFollowUp(sessionId, input);
-          pushMessage({ role: 'assistant', content: resp, type: 'text' });
-        } catch (e) {
-          pushMessage({
-            role: 'system',
-            content: `追问失败：${e instanceof Error ? e.message : '未知错误'}`,
-          });
-        }
+        return;
+      }
+      // HTTP 降级：必须有"正在回答"状态，否则用户会重复发送
+      setIsSending(true);
+      try {
+        const resp = await agentFollowUp(sessionId, input);
+        pushMessage({ role: 'assistant', content: resp, type: 'text' });
+      } catch (e) {
+        pushMessage({
+          role: 'system',
+          content: `追问失败：${e instanceof Error ? e.message : '未知错误'}`,
+        });
+      } finally {
+        setIsSending(false);
       }
     },
-    [sessionId, pushMessage]
+    [isSending, sessionId, pushMessage]
   );
 
   const reset = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     wsRef.current?.close();
     wsRef.current = null;
     setStep('upload');
     setRiskLevel(null);
+    setRiskScope(null);
+    setRecommendations([]);
+    setErrorMessage(null);
+    setIsSending(false);
     setMessages([]);
     setSessionId(null);
     setQuestions([]);
@@ -166,7 +220,10 @@ export function useDiagnosis() {
   }, []);
 
   useEffect(() => {
-    return () => wsRef.current?.close();
+    return () => {
+      abortRef.current?.abort();
+      wsRef.current?.close();
+    };
   }, []);
 
   return {
@@ -175,8 +232,13 @@ export function useDiagnosis() {
     questions,
     report,
     riskLevel,
+    riskScope,
+    recommendations,
+    errorMessage,
     isLoading,
+    isSending,
     start,
+    cancel,
     submitClarification,
     startChat,
     sendMessage,

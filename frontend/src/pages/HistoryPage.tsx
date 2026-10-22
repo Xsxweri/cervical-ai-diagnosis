@@ -4,9 +4,10 @@ import { getHistory, removeHistory, clearHistory } from '../libts/storage';
 import { formatTime } from '../libts/format';
 import type { HistoryRecord } from '../types';
 import RiskBadge from '../components/ui/RiskBadge';
+import RiskScopeTag from '../components/ui/RiskScopeTag';
 import EmptyState from '../components/ui/EmptyState';
 import Modal from '../components/ui/Modal';
-import { useToast } from '../components/ui/Toast';
+import { useToast } from '../hooks/useToast';
 
 export default function HistoryPage() {
   const [records, setRecords] = useState<HistoryRecord[]>(() => getHistory());
@@ -61,7 +62,10 @@ export default function HistoryPage() {
                   <span className="text-danger-600">异常 {r.abnormalCells}</span>
                 )}
               </div>
-              <RiskBadge level={r.riskLevel} />
+              <div className="flex items-center gap-1.5">
+                <RiskScopeTag scope={r.riskScope} level={r.riskLevel} />
+                <RiskBadge level={r.riskLevel} />
+              </div>
               <div className="flex gap-1">
                 <button className="btn-ghost px-2" onClick={() => setDetail(r)} aria-label="查看详情">
                   <Eye size={16} />
@@ -84,7 +88,10 @@ export default function HistoryPage() {
               <InfoItem label="时间" value={formatTime(detail.timestamp)} />
               <div>
                 <p className="text-gray-400 text-xs">风险等级</p>
-                <RiskBadge level={detail.riskLevel} size="md" />
+                <div className="mt-1 flex items-center gap-1.5">
+                  <RiskScopeTag scope={detail.riskScope} level={detail.riskLevel} />
+                  <RiskBadge level={detail.riskLevel} size="md" />
+                </div>
               </div>
               {detail.totalCells != null && <InfoItem label="检测细胞数" value={String(detail.totalCells)} />}
               {detail.abnormalCells != null && <InfoItem label="异常细胞数" value={String(detail.abnormalCells)} />}

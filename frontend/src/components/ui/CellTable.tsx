@@ -1,13 +1,15 @@
 import { classLabel, pct } from '../../libts/format';
+import type { UncertaintyThresholds } from '../../libts/format';
 import type { CellResult } from '../../types';
 import UncertaintyBadge from './UncertaintyBadge';
 
 interface Props {
   cells: CellResult[];
   limit?: number;
+  thresholds?: UncertaintyThresholds;
 }
 
-export default function CellTable({ cells, limit }: Props) {
+export default function CellTable({ cells, limit, thresholds }: Props) {
   const list = limit ? cells.slice(0, limit) : cells;
 
   if (cells.length === 0) {
@@ -41,10 +43,28 @@ export default function CellTable({ cells, limit }: Props) {
               </td>
               <td className="font-semibold text-primary-700">{pct(cell.final_confidence)}</td>
               <td>
-                <UncertaintyBadge value={cell.uncertainty} showLabel={false} />
+                <UncertaintyBadge
+                  value={cell.uncertainty}
+                  showLabel={false}
+                  thresholds={thresholds}
+                />
               </td>
-              <td>{cell.morphology.nuclear_cytoplasmic_ratio}</td>
-              <td className="text-gray-500 max-w-xs truncate">{cell.morphology.interpretation}</td>
+              <td>
+                {cell.morphology.measurement_reliable === false ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-gray-400"
+                    title={cell.morphology.interpretation}
+                  >
+                    —
+                    <span className="badge bg-warning-100 text-warning-700">不可靠</span>
+                  </span>
+                ) : (
+                  cell.morphology.nuclear_cytoplasmic_ratio
+                )}
+              </td>
+              <td className="text-gray-500 max-w-xs truncate" title={cell.morphology.interpretation}>
+                {cell.morphology.interpretation}
+              </td>
             </tr>
           ))}
         </tbody>

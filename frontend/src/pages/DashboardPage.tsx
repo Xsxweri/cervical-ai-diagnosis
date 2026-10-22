@@ -10,12 +10,14 @@ import {
   Gauge,
   ArrowRight,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { fetchHealth } from '../libts/api';
 import { getHistory } from '../libts/storage';
 import { formatTime } from '../libts/format';
 import type { HealthResponse } from '../types';
 import StatCard from '../components/ui/StatCard';
 import RiskBadge from '../components/ui/RiskBadge';
+import RiskScopeTag from '../components/ui/RiskScopeTag';
 import Spinner from '../components/ui/Spinner';
 import EmptyState from '../components/ui/EmptyState';
 
@@ -111,7 +113,8 @@ export default function DashboardPage() {
                 <p><span className="text-gray-400">多分类：</span>{health.models.多分类}</p>
                 <p>
                   <span className="text-gray-400">阈值：</span>
-                  不确定 {health.config.不确定阈值} · 异常 CONF {health.config.异常的CONF阈值}
+                  不确定性 中 {health.config.不确定阈值_medium} / 高 {health.config.不确定阈值_high}
+                  {' · '}异常 CONF {health.config.异常的CONF阈值}
                 </p>
               </div>
             </div>
@@ -135,7 +138,10 @@ export default function DashboardPage() {
                       {formatTime(r.timestamp)} · {r.mode === 'agent' ? '智能诊断' : '快速分析'}
                     </p>
                   </div>
-                  <RiskBadge level={r.riskLevel} />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <RiskScopeTag scope={r.riskScope} level={r.riskLevel} />
+                    <RiskBadge level={r.riskLevel} />
+                  </div>
                 </li>
               ))}
             </ul>
@@ -147,7 +153,7 @@ export default function DashboardPage() {
 }
 
 /* 内联小卡片（避免过度抽象） */
-function StatCardStandalone({ icon: Icon, label, desc, tone }: { icon: any; label: string; desc: string; tone: string }) {
+function StatCardStandalone({ icon: Icon, label, desc, tone }: { icon: LucideIcon; label: string; desc: string; tone: 'ai' | 'primary' | 'gray'; }) {
   const map: Record<string, string> = {
     ai: 'bg-ai-50 text-ai-600',
     primary: 'bg-primary-50 text-primary-600',
