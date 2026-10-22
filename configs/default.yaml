@@ -2,6 +2,8 @@ data:
   datasets:
     - type: "sipakmed"
       path: "data/sipakmed"
+    - type: "herlev"
+      path: "data/herlev"
   batch_size: 32
   img_size: 224
   train_ratio: 0.7

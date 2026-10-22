@@ -9,7 +9,7 @@ from services.vision_service import analyze_image_from_path
 CLASSES = ["im_Dyskeratotic", "im_Koilocytotic", "im_Metaplastic",
            "im_Parabasal", "im_Superficial-Intermediate"]
 PER_CLASS = 12
-THRESHOLDS = (0.02, 0.03, 0.05, 0.08, 0.10, 0.15)
+THRESHOLDS = (0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80)
 
 
 def collect_files():
@@ -36,11 +36,30 @@ async def main():
     if not files:
         print("[!] 没命中, 确认从项目根运行"); return
     results = [await analyze_image_from_path(f) for f in files]
-    per_cell = [c.get("uncertainty", 0.0) for r in results if r.get("cells") for c in r["cells"]]
+
+    n_cells = [len(r.get("cells") or []) for r in results]
+    print(f"[每图细胞数] mean={np.mean(n_cells):.2f} max={max(n_cells)} "
+          f"(>1 说明检测框重复，需按第3项处理)")
+
+    def cells_of(pred):
+        return [c for r in results for c in (r.get("cells") or []) if pred(c)]
+
+    per_cell = [c["uncertainty"] for c in cells_of(lambda c: True)]
+    bin_cells = [c["uncertainty"] for c in cells_of(lambda c: c.get("model_used") == "binary")]
+    multi_cells = [c["uncertainty"] for c in cells_of(lambda c: c.get("model_used") == "multiclass")]
+
+    agg = results[0].get("uncertainty_aggregation", "unknown") if results else "unknown"
     per_img = [r["max_uncertainty"] for r in results if r.get("max_uncertainty") is not None]
-    print(f"[结果] 有细胞 {len(per_img)}/{len(results)} 张")
-    report("每细胞 uncertainty", per_cell)
-    report("每图 max_uncertainty(路由实际比较)", per_img)
+
+    report("每细胞 uncertainty(全部)", per_cell)
+    report("每细胞 uncertainty(二分类路径)", bin_cells)
+    report("每细胞 uncertainty(多分类路径)", multi_cells)
+    report(f"每图 max_uncertainty(路由实际比较),聚合={agg})", per_img)
+
+    if per_img:
+        a = np.array(per_img, dtype=float)
+        print(f"\n[P90 vs 旧 max 的差异] P90={np.percentile(a, 90):.4f} "
+              f"P95={np.percentile(a, 95):.4f} mean={a.mean():.4f}")
 
 
 asyncio.run(main())

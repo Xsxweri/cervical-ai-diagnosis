@@ -13,6 +13,7 @@ data:
 model:
   name: "vit"
   num_classes: 7
+  label_space: "herlev"
   pretrained: true
   dropout_rate: 0.5
   model_type: "vit"  # 指定使用Vision Transformer

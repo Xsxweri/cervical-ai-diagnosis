@@ -11,10 +11,10 @@ test: images/test
 # 类别数量
 nc: 5
 
-# 类别名称（对应SiPaKMeD数据集的5个类别）
-names: 
+# 类别名称
+names:
   0: Dyskeratotic
   1: Koilocytotic
   2: Metaplastic
   3: Parabasal
-  4: SuperficialIntermediate
+  4: Superficial-Intermediate

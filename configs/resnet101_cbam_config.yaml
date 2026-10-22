@@ -15,6 +15,7 @@ data:
 model:
   name: "resnet101_cbam"
   num_classes: 7
+  label_space: "herlev"
   pretrained: true
   dropout_rate: 0.5
   model_type: "resnet101"

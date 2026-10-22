@@ -11,6 +11,7 @@ data:
 model:
   name: "resnet50"
   num_classes: 5  # SiPaKMeD的5个类别
+  label_space: "sipakmed"
   pretrained: true
   dropout_rate: 0.5
   model_type: "resnet50" # 可选: resnet50, resnet101, efficientnet_b0, vit

@@ -14,6 +14,7 @@ model:
   name: "efficientnet_b0"
   num_classes: 7
   pretrained: true
+  label_space: "herlev"
   dropout_rate: 0.5
   model_type: "efficientnet_b0"  # 指定使用EfficientNet
 
