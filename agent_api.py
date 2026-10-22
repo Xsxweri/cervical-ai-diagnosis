@@ -34,7 +34,9 @@ from services.vision_service import (
     MC_DROPOUT_SAMPLES,
     ABNORMAL_CONF_THRESHOLD,
 )
-from utils.uncertainty import UNCERTAINTY_HIGH, UNCERTAINTY_MEDIUM
+from utils.uncertainty import (
+    UNCERTAINTY_HIGH, UNCERTAINTY_MEDIUM, METRIC_NAME, UNCERTAINTY_PERCENTILE,
+)
 
 class FollowUpRequest(PydanticBaseModel):
     session_id: str
@@ -43,6 +45,28 @@ class FollowUpRequest(PydanticBaseModel):
 class LoginRequest(PydanticBaseModel):
     username: str
     password: str
+
+def _agent_payload(session_id: str, result: dict) -> dict:
+    """统一 Agent 响应体：把不可判读原因、风险口径一并返回给前端。"""
+    risk_level = result.get("risk_level")
+    if risk_level == "unreadable":
+        status = "unreadable"
+    elif result.get("is_complete"):
+        status = "complete"
+    else:
+        status = "awaiting_clarification"
+    return {
+        "session_id": session_id,
+        "status": status,
+        "risk_level": risk_level,
+        "risk_scope": result.get("risk_scope"),
+        "decision_reason": result.get("decision_reason"),
+        "clarification_rounds": result.get("clarification_rounds", 0),
+        "recommendations": result.get("recommendations"),
+        "report": result.get("diagnosis_report"),
+        "questions": result.get("clarification_questions"),
+        "error_message": result.get("error_message"),
+    }
 
 # 引入连接管理器 (防止 WebSocket 内存泄漏)
 class ConnectionManager:
@@ -305,6 +329,25 @@ async def login(request: Request, req: LoginRequest):
         },
     }
 
+def _error_result(detail: str) -> dict:
+    """单图失败时的占位结果，字段与 _analyze_pil_image_sync 完全一致。"""
+    return {
+        "total_cells": 0,
+        "abnormal_cells": 0,
+        "cells": [],
+        "highest_risk": "none",
+        "interpretable": False,
+        "unreadable_reason": None,
+        "risk_level": None,
+        "risk_scope": None,
+        "max_uncertainty": 0.0,
+        "uncertainty_metric": METRIC_NAME,
+        "uncertainty_aggregation": f"p{UNCERTAINTY_PERCENTILE}",
+        "uncertainty_thresholds": {"high": UNCERTAINTY_HIGH, "medium": UNCERTAINTY_MEDIUM},
+        "needs_clarification": False,
+        "error": detail,
+    }
+
 # 批量/压缩分析的资源上限常量
 MAX_BATCH_FILES = 10
 MAX_ZIP_FILES = 20
@@ -344,10 +387,10 @@ async def analyze_batch(request: Request, files: List[UploadFile] = File(...)):
             image = Image.open(io.BytesIO(data)).convert("RGB")
             return name, await analyze_pil_image(image)
         except HTTPException as e:
-            return name, {"出错": e.detail, "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+            return name, _error_result(str(e.detail))
         except Exception:
             logger.exception(f"批量分析失败: {name}")
-            return name, {"出错": "图像分析失败", "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+            return name, _error_result("图像分析失败")
 
     # GPU 下并发过高会 OOM，用信号量限流
     sem = asyncio.Semaphore(int(os.getenv("ANALYZE_CONCURRENCY", "2")))
@@ -393,10 +436,10 @@ async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
                     validate_file_content(img_bytes, filename)
                     payloads[filename] = img_bytes
                 except HTTPException as e:
-                    results[filename] = {"出错": e.detail, "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+                    results[filename] = _error_result(str(e.detail))
                 except Exception:
                     logger.exception(f"ZIP 内图片读取失败: {filename}")
-                    results[filename] = {"出错": "图像读取失败", "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+                    results[filename] = _error_result("图像读取失败")
             
             # 并发推理（GPU 下需限流，避免显存 OOM）
             sem = asyncio.Semaphore(int(os.getenv("ANALYZE_CONCURRENCY", "2")))
@@ -406,7 +449,7 @@ async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
                     return filename, await analyze_pil_image(image)
                 except Exception:
                     logger.exception(f"ZIP 内图片分析失败: {filename}")
-                    return filename, {"出错": "图像分析失败", "总细胞数": 0, "异常细胞数": 0, "细胞类": []}
+                    return filename, _error_result("图像分析失败")
 
             async def _guarded(filename: str, img_bytes: bytes):
                 async with sem:
@@ -489,15 +532,7 @@ async def agent_clarify(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise _internal_error(e)
-    return {
-        "session_id": session_id,
-        "status": "complete" if result["is_complete"] else "awaiting_clarification",
-        "risk_level": result.get("risk_level"), 
-        "risk_scope": result.get("risk_scope"),
-        "recommendations": result.get("recommendations"),
-        "report": result.get("diagnosis_report"),
-        "questions": result.get("clarification_questions"),
-    }
+    return _agent_payload(session_id, result)
 
 # 4. 优化后的上传接口
 @app.post("/api/agent/upload", dependencies=[Depends(verify_token)])
@@ -538,15 +573,7 @@ async def agent_upload(
         logger.exception("诊断启动失败")
         raise _internal_error(e)
 
-    return {
-        "session_id": session_id,
-        "status": "complete" if result["is_complete"] else "awaiting_clarification",
-        "risk_level": result.get("risk_level"),
-        "risk_scope": result.get("risk_scope"), 
-        "recommendations": result.get("recommendations"), 
-        "report": result.get("diagnosis_report"),
-        "questions": result.get("clarification_questions"),
-    }
+    return _agent_payload(session_id, result)
 
 def _extract_ws_token(websocket: WebSocket) -> str:
     """从 Sec-WebSocket-Protocol 子协议中取 JWT，避免 token 出现在 URL query 里。

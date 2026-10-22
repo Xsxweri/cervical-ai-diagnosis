@@ -351,15 +351,27 @@ def test_agent_risk_uses_shared_judgement():
 
 # --- 不可判读拦截（0 细胞不得判低风险）---
 def test_zero_cells_is_not_low_risk():
-    """回归：未检出细胞时必须不可判读，而非 low（曾用 max(total,1) 兜底导致假阴性）。"""
+    """回归：未检出细胞时必须标记为不可判读，而非 low 或 pending 追问。"""
     out = uncertainty_assessment_agent({
         "cv_result": {"total_cells": 0, "abnormal_cells": 0, "max_uncertainty": 0.01}
     })
-    assert out["risk_level"] == "pending"
-    assert out["action"] == "clarify"
-    assert out["risk_level"] != "low"
+    assert out["risk_level"] == "unreadable"
+    assert out["action"] == "unreadable"
+    assert out["needs_clarification"] is False
+    assert out["risk_scope"] is None
     assert out.get("error_message"), "应给出不可判读原因"
 
+def test_agent_payload_marks_unreadable():
+    from agent_api import _agent_payload
+    out = _agent_payload("sid", {
+        "error_message": "无细胞", "is_complete": True, "risk_level": "unreadable"
+    })
+    assert out["status"] == "unreadable"
+    assert out["error_message"] == "无细胞"
+
+    ok = _agent_payload("sid", {"is_complete": True, "risk_level": "low"})
+    assert ok["status"] == "complete"
+    assert ok["error_message"] is None
 
 # --- 风险口径 ---
 def test_risk_scope_is_cell_for_single_cell():
@@ -385,3 +397,66 @@ def test_risk_scope_threshold_makes_all_levels_reachable():
     levels = {risk_level_from_ratio(k / CASE_RISK_MIN_CELLS)
               for k in range(CASE_RISK_MIN_CELLS + 1)}
     assert {"low", "medium", "high", "emergency"} <= levels
+
+def test_clarification_rounds_hard_cap():
+    """追问达上限后必须停止追问，降级为 direct_report（防无限回环）。"""
+    from utils.uncertainty import MAX_CLARIFICATION_ROUNDS
+    out = uncertainty_assessment_agent({
+        "cv_result": {"total_cells": 5, "max_uncertainty": 0.95},
+        "clarification_rounds": MAX_CLARIFICATION_ROUNDS,
+        "retrieval_done": True,
+    })
+    assert out["action"] == "direct_report"
+    assert out["risk_level"] == "pending"
+    assert out["needs_clarification"] is False
+    assert "追问" in out["decision_reason"]
+
+
+def test_clarification_rounds_increments_only_in_clarification_node():
+    """首次高不确定且未超额 → 仍应追问。"""
+    out = uncertainty_assessment_agent({
+        "cv_result": {"total_cells": 5, "max_uncertainty": 0.95},
+        "clarification_rounds": 0,
+        "retrieval_done": False,
+    })
+    assert out["action"] == "clarify"
+    assert "1/" in out["decision_reason"]
+
+
+def test_retrieval_not_repeated():
+    """已检索过则不再进入 deep_retrieve，避免 DR↔UA 回环。"""
+    out = uncertainty_assessment_agent({
+        "cv_result": {"total_cells": 5, "max_uncertainty": 0.45},
+        "clarification_rounds": 0,
+        "retrieval_done": True,
+    })
+    assert out["action"] == "direct_report"
+
+
+def test_agent_payload_unreadable_by_risk_level_only():
+    """带 error_message 但 risk_level 不是 unreadable 时，不得判成 unreadable。"""
+    from agent_api import _agent_payload
+    p = _agent_payload("sid", {
+        "risk_level": "pending", "is_complete": True,
+        "error_message": "已追问 2 轮仍不足", "diagnosis_report": "x",
+    })
+    assert p["status"] == "complete"
+    assert p["risk_level"] == "pending"
+
+
+def test_case_evidence_aggregation():
+    from Agents.diagnosis_graph import aggregate_case_evidence
+    ev = aggregate_case_evidence({"cells": [
+        {"final_class": "Dyskeratotic", "final_confidence": 0.8,
+         "binary_result": {"class": "abnormal"}, "uncertainty": 0.1,
+         "morphology": {"measurement_reliable": True,
+                        "nuclear_cytoplasmic_ratio": 0.5, "circularity": 0.8}},
+        {"final_class": "Koilocytotic", "final_confidence": 0.7,
+         "binary_result": {"class": "abnormal"}, "uncertainty": 0.2,
+         "morphology": {"measurement_reliable": False}},
+    ]})
+    assert ev["total"] == 2
+    assert ev["has_conflict"] is True          # 分型不一致
+    assert ev["morphology_unreliable"] == 1
+    assert ev["nc_ratio"]["n"] == 1
+    assert ev["top_abnormal"][0]["class"] == "Dyskeratotic"

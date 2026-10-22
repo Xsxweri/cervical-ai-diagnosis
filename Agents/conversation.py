@@ -153,6 +153,7 @@ class ConversationManager:
             "needs_clarification": cv_results.get("needs_clarification", False),
             "conversation_history": [HumanMessage(content="用户上传了宫颈细胞图片，开始AI辅助诊断。")],
             "current_step": "uncertainty_assessment",
+            "clarification_rounds": 0,
             "is_complete": False
         }
 
@@ -219,6 +220,9 @@ class ConversationManager:
         if not state.get("is_complete"):
             return "诊断流程尚未最终完成，请先回答上面的问题。"
 
+        if state.get("risk_level") == "unreadable":
+            return "该图像未能判读，暂无可讨论的诊断结论，请重新上传合格图像。"
+
         # 1. 获取 LLM 实例
         llm = get_llm()
 
@@ -227,18 +231,41 @@ class ConversationManager:
         ctx_time_location = time_location or f"<time_location>\n当前时间：未知\n当前地点：未知\n</time_location>"
 
         # 提取诊断报告摘要（防止上下文过长）
-        report_snippet = (state.get("diagnosis_report") or "")[:800]
+        report_snippet = (state.get("diagnosis_report") or "")[:1200]
         recommendations = "\n".join([f"- {r}" for r in (state.get("recommendations") or [])])
         risk_level = state.get("risk_level") or "未知"
+        risk_scope = state.get("risk_scope") or "cell"
 
+        # 补充细胞级证据与文献证据
+        cv = state.get("cv_result") or {}
+        cells = cv.get("cells") or []
+        n_total = int(cv.get("total_cells", 0) or 0)
+        n_abn = int(cv.get("abnormal_cells", 0) or 0)
+        class_dist = {}
+        for c in cells:
+            k = c.get("final_class")
+            class_dist[k] = class_dist.get(k, 0) + 1
+        dist_text = "、".join(f"{k}:{v}" for k, v in sorted(class_dist.items())) or "无"
+
+        knowledge = state.get("retrieved_knowledge") or []
+        kb_text = "\n".join(
+            f"- {(d.get('content') or '')[:150]}({d.get('source', '未知')} 第{d.get('page', 0)}页)"
+            for d in knowledge[:3]) or "（本次未检索到文献依据）"
+        
         # 构建最终的 Prompt
         # 这里将 time_location 插入到了Prompt的最开始部分
         followup_prompt = render(
             "followup_user",
             time_location=ctx_time_location,
             risk_level=risk_level,
+            risk_scope=risk_scope,
             report_snippet=report_snippet,
             recommendations=recommendations,
+            total_cells=n_total,
+            abnormal_cells=n_abn,
+            class_distribution=dist_text,
+            uncertainty=f"{float(state.get('max_uncertainty') or 0.0):.3f}",
+            knowledge=kb_text,
             user_input=user_input,
         )
 

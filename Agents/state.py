@@ -29,13 +29,16 @@ class DiagnosisState(TypedDict, total=False):
     needs_clarification: bool  # 是否处于等待用户澄清状态
 
     # --- 认知层 (RAG) ---
-    retrieved_knowledge: List[Dict[str, Any]]  #检索到的相关知识
+    retrieved_knowledge: List[Dict[str, Any]]  # 检索到的相关知识
 
     # --- 决策层 (Agent) ---
-    risk_level: Optional[Literal["pending", "low", "medium", "high", "emergency"]]  #风险等级
+    risk_level: Optional[Literal["pending", "unreadable", "low", "medium", "high", "emergency"]]  #风险等级
     risk_scope: Optional[Literal["cell", "case"]]  # 风险口径：单细胞提示 / 病例级
-    action: Optional[Literal["direct_report", "clarify", "deep_retrieve","re_evaluate"]]  #下一步动作
-    clarification_questions: List[str]  #生成的追问问题列表
+    action: Optional[Literal["direct_report", "clarify", "deep_retrieve","re_evaluate", "unreadable"]]  #下一步动作
+    clarification_questions: List[str]  # 生成的追问问题列表
+    clarification_rounds: int  # 已追问轮次（用于硬性上限，防止无限回环）
+    retrieval_done: bool  # RAG检索是否完成（防检索回环）
+    decision_reason: Optional[str]  # 决策理由
 
     # --- 可解释性 ---
     gradcam_path: Optional[str]  #Grad-CAM热力图路径

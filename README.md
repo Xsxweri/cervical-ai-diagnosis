@@ -190,6 +190,19 @@ python appWeb/app.py
 | POST | `/analyze_zip` | ZIP 压缩包批量分析（≤20 张） | 3/min |
 | GET | `/health` | 健康检查（设备、模型、阈值配置） | - |
 
+### `/analyze*` 与 Agent 诊断的能力边界
+
+| | `/analyze`、`/analyze_batch`、`/analyze_zip` | `/api/agent/upload` 及后续 |
+|---|---|---|
+| 是否走 LangGraph | ❌ 直接返回 CVResult | ✅ 完整状态机 |
+| 追问澄清 | ❌ | ✅ |
+| RAG 医学依据 | ❌ | ✅ |
+| 可解释性报告 | ❌ | ✅ |
+| 风险口径 | 仅 `risk_level`（`risk_scope` 同步返回） | 含 `risk_scope` + `decision_reason` + 建议 |
+| 用途 | **快速筛查 / 批量预筛** | **可追溯的辅助诊断记录** |
+
+⚠️ 快速分析页的输出**不构成诊断记录**，不应作为临床决策依据，也不写入审计留痕。
+
 ### 示例：登录 + 诊断
 
 ```bash

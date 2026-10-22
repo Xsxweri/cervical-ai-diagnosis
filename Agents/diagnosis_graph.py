@@ -22,8 +22,9 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from utils.uncertainty import (
-    UNCERTAINTY_HIGH, 
-    UNCERTAINTY_MEDIUM, 
+    UNCERTAINTY_HIGH,
+    UNCERTAINTY_MEDIUM,
+    MAX_CLARIFICATION_ROUNDS,
     risk_level_from_ratio,
     risk_scope_for,
 )
@@ -64,20 +65,101 @@ MEDIUM_UNCERTAINTY = UNCERTAINTY_MEDIUM
 # 可解释性开关：开启后在可解释性节点为异常细胞生成 Grad-CAM（默认关闭，避免额外 GPU 开销）
 ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "false").strip().lower() in {"1", "true", "yes", "on"}
 
+
+def aggregate_case_evidence(cv_result: dict) -> dict:
+    """聚合 Case 级别信息
+    :param cv_result: 模型输出结果
+    """
+    from collections import Counter
+
+    cells = cv_result.get("cells") or []
+    total = len(cells)
+    if total == 0:
+        return {"total": 0}
+
+    # 1) 类别分布（按 final_class）
+    dist = Counter(c.get("final_class") for c in cells)
+
+    # 2) 异常细胞的置信度 Top-N（已排序时取前 3）
+    abnormal = [c for c in cells if (c.get("binary_result") or {}).get("class") == "abnormal"]
+    abnormal.sort(key=lambda c: float(c.get("final_confidence") or 0.0), reverse=True)
+    top = abnormal[:3]
+
+    # 3) 形态学统计（仅取测量可靠的细胞，避免用噪声算均值）
+    nc, circ = [], []
+    unreliable = 0
+    for c in cells:
+        m = c.get("morphology") or {}
+        if m.get("measurement_reliable"):
+            if m.get("nuclear_cytoplasmic_ratio"):
+                nc.append(float(m["nuclear_cytoplasmic_ratio"]))
+            if m.get("circularity"):
+                circ.append(float(m["circularity"]))
+        else:
+            unreliable += 1
+
+    def _stat(xs):
+        if not xs:
+            return None
+        xs = sorted(xs)
+        n = len(xs)
+        return {
+            "n": n,
+            "mean": sum(xs) / n,
+            "median": xs[n // 2],
+            "min": xs[0],
+            "max": xs[-1],
+        }
+
+    # 4) 冲突证据：异常细胞分型不止一种
+    abnormal_types = {c.get("final_class") for c in abnormal}
+    has_conflict = len(abnormal_types) > 1
+
+    # 5) 不确定性分布
+    us = [float(c.get("uncertainty") or 0.0) for c in cells]
+
+    return {
+        "total": total,
+        "abnormal_count": len(abnormal),
+        "class_distribution": dict(dist),
+        "abnormal_types": sorted(abnormal_types),
+        "has_conflict": has_conflict,
+        "top_abnormal": [
+            {
+                "class": c.get("final_class"),
+                "confidence": float(c.get("final_confidence") or 0.0),
+                "uncertainty": float(c.get("uncertainty") or 0.0),
+            }
+            for c in top
+        ],
+        "nc_ratio": _stat(nc),
+        "circularity": _stat(circ),
+        "morphology_unreliable": unreliable,
+        "uncertainty_max": max(us) if us else 0.0,
+        "uncertainty_median": sorted(us)[len(us) // 2] if us else 0.0,
+    }
+
 # ====节点1、不确定性评估====
 def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
     """利用MC Dropout结果评估不确定性"""
     assert UNCERTAINTY_HIGH >= UNCERTAINTY_MEDIUM, "不确定性阈值配置反了"
     cv_result = state.get("cv_result", {}) or {}
-    max_uncertainty = cv_result.get("max_uncertainty", 0.0)
+    max_uncertainty = float(cv_result.get("max_uncertainty", 0.0) or 0.0)
     total_cells = int(cv_result.get("total_cells", 0) or 0)
+    rounds = int(state.get("clarification_rounds", 0) or 0)
+    retrieval_done = bool(state.get("retrieval_done", False))
+    scope = risk_scope_for(total_cells)
+
+    # 不可读性判断
     if total_cells == 0:
         return {
             "max_uncertainty": max_uncertainty,
-            "needs_clarification": True,
-            "action": "clarify",
-            "risk_level": "pending",
-            "risk_scope": "cell",
+            "needs_clarification": False,
+            "clarification_rounds": rounds,
+            "action": "unreadable",
+            "risk_level": "unreadable",
+            "risk_scope": None,
+            "decision_reason": "未检出任何细胞，无法判读",
             "error_message": (
                 "未检测到可判读的宫颈细胞，无法生成诊断结论。"
                 "请确认图像为细胞学视野、清晰度足够、且未为大面积空白或非细胞内容，然后重新上传。"
@@ -85,57 +167,91 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
             "current_step": "uncertainty_assessment",
         }
 
-    if state.get("user_query") and max_uncertainty > HIGH_UNCERTAINTY:
-        print("检测到用户补充信息，忽略高不确定性，强制进入深度检索以辅助诊断")
-        return {
-            "max_uncertainty": max_uncertainty,
-            "needs_clarification": False,
-            "action": "deep_retrieve",  # 跳过直接报告，去查文献辅助
-            "risk_level": "medium",
-            "current_step": "uncertainty_assessment"
-        }
-
-    # 不确定性分级决策
+    # ---- 高不确定性 ----
     if max_uncertainty > HIGH_UNCERTAINTY:
-        # 高不确定性: 必须追问
-        return {
-            "max_uncertainty": max_uncertainty,
-            "needs_clarification": True,
-            "action": "clarify",
-            "risk_level": "pending",
-            "risk_scope": risk_scope_for(total_cells),
-            "current_step": "uncertainty_assessment"
-        }
-    elif max_uncertainty > MEDIUM_UNCERTAINTY:
-        # 中等不确定性: 检索更多知识
+        # 已达检索上限 + 追问上限 → 强制出报告并标注证据不足
+        if rounds >= MAX_CLARIFICATION_ROUNDS and retrieval_done:
+            return {
+                "max_uncertainty": max_uncertainty,
+                "needs_clarification": False,
+                "clarification_rounds": rounds,
+                "action": "direct_report",
+                "risk_level": "pending",
+                "risk_scope": scope,
+                "decision_reason": (
+                    f"不确定性仍高({max_uncertainty:.3f})，已追问 {rounds} 轮且完成文献检索，"
+                    f"不再继续追问，降级为证据不足报告"),
+                "error_message": (
+                    f"已追问 {rounds} 轮并检索文献后，证据仍不足以给出明确分级。"
+                    "建议人工镜检复核或重新采样。"),
+                "current_step": "uncertainty_assessment",
+            }
+        
+         # 继续追问
+        if rounds < MAX_CLARIFICATION_ROUNDS:
+            return {
+                "max_uncertainty": max_uncertainty,
+                "needs_clarification": True,
+                "clarification_rounds": rounds,
+                "action": "clarify",
+                "risk_level": "pending",
+                "risk_scope": scope,
+                "decision_reason": (
+                    f"不确定性 {max_uncertainty:.3f} > {HIGH_UNCERTAINTY}，"
+                    f"第 {rounds + 1}/{MAX_CLARIFICATION_ROUNDS} 轮追问"),
+                "current_step": "uncertainty_assessment",
+            }
+        # 检索更多知识
         return {
             "max_uncertainty": max_uncertainty,
             "needs_clarification": False,
+            "clarification_rounds": rounds,
             "action": "deep_retrieve",
             "risk_level": "medium",
-            "risk_scope": risk_scope_for(total_cells),
-            "current_step": "uncertainty_assessment"
+            "risk_scope": scope,
+            "decision_reason": (
+                f"不确定性 {max_uncertainty:.3f} 仍高，追问已达上限，转为文献检索辅助"),
+            "current_step": "uncertainty_assessment",
         }
-    else:
-        # 低不确定性: 直接生成报告
-        abnormal_count = int(cv_result.get("abnormal_cells", 0) or 0)
-        ratio = abnormal_count / total_cells
-        risk = risk_level_from_ratio(ratio)
 
+    # ---- 中等不确定性 ----
+    if max_uncertainty > MEDIUM_UNCERTAINTY and not retrieval_done:
         return {
             "max_uncertainty": max_uncertainty,
             "needs_clarification": False,
-            "action": "direct_report",
-            "risk_level": risk,
-            "risk_scope": risk_scope_for(total_cells),
-            "current_step": "uncertainty_assessment"
+            "clarification_rounds": rounds,
+            "action": "deep_retrieve",
+            "risk_level": "medium",
+            "risk_scope": scope,
+            "decision_reason": (
+                f"不确定性 {max_uncertainty:.3f} 处于中等区间，先检索文献再评估"),
+            "current_step": "uncertainty_assessment",
         }
-# ====节点2、决策路由====
+    # ----  低不确定性（或中不确定性但已检索过）：直接出报告 ----
+    abnormal_count = int(cv_result.get("abnormal_cells", 0) or 0)
+    ratio = abnormal_count / total_cells
+    risk = risk_level_from_ratio(ratio)
+    return {
+        "max_uncertainty": max_uncertainty,
+        "needs_clarification": False,
+        "clarification_rounds": rounds,
+        "action": "direct_report",
+        "risk_level": risk,
+        "risk_scope": scope,
+        "decision_reason": (
+            f"不确定性 {max_uncertainty:.3f} ≤ {MEDIUM_UNCERTAINTY}，"
+            f"直接出报告；异常占比 {ratio:.2f} → {risk}" if max_uncertainty <= MEDIUM_UNCERTAINTY
+            else f"已检索文献，不确定性 {max_uncertainty:.3f} 不再降级追问，直接出报告"),
+        "current_step": "uncertainty_assessment",
+    }
+
+
+# ====决策路由====
 def decision_router(state: DiagnosisState) -> str:
     """根据不确定性评估结果路由"""
     return state.get("action","direct_report")
 
-# ====节点3、主动追问====
+# ====主动追问====
 async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     """高不确定性时主动追问关键信息"""
     cv_result = state.get("cv_result", {}) or {}
@@ -166,25 +282,28 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
 async def clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     """通过 interrupt 暂停图执行，等待用户回答后恢复"""
     questions = state.get("clarification_questions") or []
+    rounds = int(state.get("clarification_rounds", 0) or 0)
 
     user_response = interrupt({
         "questions": questions,
-        "message": "检测到高不确定性，需要用户补充信息..."
+        "message": "检测到高不确定性，需要用户补充信息...",
+        "round": rounds + 1,
+        "max_rounds": MAX_CLARIFICATION_ROUNDS,
     })
 
-    # 将用户回答注入历史和状态
     history = list(state.get("conversation_history") or [])
     history.append(HumanMessage(content=str(user_response)))
 
     return {
         "conversation_history": history,
         "user_query": str(user_response),
+        "clarification_rounds": rounds + 1,   # ← 此处递增
         "needs_clarification": False,
         "action": "re_evaluate",
         "current_step": "clarification_resolved"
     }
 
-# ====节点4、RAG检索====
+# ====RAG检索====
 async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
     """中等不确定性时进行深度知识检索"""
     kb = get_kb()
@@ -193,58 +312,131 @@ async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     tasks =[kb.retrieve_by_classification(classification, k=5)]
 
-    # 2. 基于形态学特征检索 (利用现有cell_analyzer)
+    # 2. 基于形态学特征检索 + 3 个最 confident 的异常细胞
     cells = cv_result.get("cells") or []
     if cells:
-        morph = cells[0].get("morphology") or {}
-        # 形态学不可靠时不作为检索条件，避免用错误特征污染检索结果
-        if morph.get("measurement_reliable"):
-            tasks.append(kb.retrieve_by_morphology(morph, k=3))
+        abnormal = [c for c in cells
+                    if (c.get("binary_result") or {}).get("class") == "abnormal"]
+        abnormal.sort(key=lambda c: float(c.get("final_confidence") or 0.0), reverse=True)
+        for c in abnormal[:3]:
+            morph = c.get("morphology") or {}
+            if morph.get("measurement_reliable"):
+                tasks.append(kb.retrieve_by_morphology(morph, k=2))
+                break
 
     results = await asyncio.gather(*tasks)
     all_knowledge = [item for sub in results for item in sub]
 
     return {
         "retrieved_knowledge": all_knowledge,
+        "retrieval_done": True,
         "current_step": "deep_retrieval"
     }
 
-# ====节点5、直接报告====
-async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
-    """低不确定性时直接生成诊断报告"""
-    cv_results = state.get("cv_result") or {}
-    cells = cv_results.get("cells") or []
-    first_cell = cells[0] if cells else {}
-    morphology=first_cell.get("morphology") or {}
 
-    if morphology.get("measurement_reliable"):
-        nc_line = f"{(morphology.get('nuclear_cytoplasmic_ratio') or 0.0):.3f}"
-        morph_note = ""
+async def post_retrieval_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """
+    检索后评估，对检索结果进行评估，并返回评估结果
+    """
+    cv_result = state.get("cv_result", {}) or {}
+    knowledge = state.get("retrieved_knowledge") or []
+    total_cells = int(cv_result.get("total_cells", 0) or 0)
+    scope = risk_scope_for(total_cells)
+
+    raw_u = float(cv_result.get("max_uncertainty", 0.0) or 0.0)
+    # 证据质量：文献条数越多、相似度越高，下调越明显（上限下调 40%）
+    if knowledge:
+        top_scores = sorted((d.get("score") or 1.0 for d in knowledge))[:3]
+        # Chroma 返回的是距离，越小越相关；这里只做保守的定性下调
+        evidence_gain = min(0.4, 0.1 * len(knowledge))
+        adjusted = raw_u * (1.0 - evidence_gain)
+        evidence_note = f"文献 {len(knowledge)} 条，不确定性 {raw_u:.3f} → {adjusted:.3f}"
     else:
-        nc_line = "不可靠（自动分割失败，忽略此项）"
-        morph_note = "\n    - 说明: 形态学自动测量不可靠，不应据此得出形态学结论"
+        adjusted = raw_u
+        evidence_note = f"未检索到相关文献，不确定性维持 {raw_u:.3f}"
 
+    if adjusted > UNCERTAINTY_HIGH:
+        # 仍高：标注复核，但仍出报告（不再回到追问，避免回环）
+        action = "direct_report"
+        risk_level = "pending"
+        needs_clarification = False
+    elif adjusted > UNCERTAINTY_MEDIUM:
+        action = "direct_report"
+        risk_level = "medium"
+        needs_clarification = False
+    else:
+        abnormal = int(cv_result.get("abnormal_cells", 0) or 0)
+        ratio = abnormal / total_cells if total_cells else 0.0
+        action = "direct_report"
+        risk_level = risk_level_from_ratio(ratio)
+        needs_clarification = False
+
+    return {
+        "max_uncertainty": round(adjusted, 4),
+        "retrieval_done": True,
+        "needs_clarification": needs_clarification,
+        "action": action,
+        "risk_level": risk_level,
+        "risk_scope": scope,
+        "decision_reason": f"检索后重评：{evidence_note} → {risk_level}",
+        "current_step": "post_retrieval_assessment",
+    }
+
+# ==== 输出报告 ====
+async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """生成诊断报告"""
+    cv_results = state.get("cv_result") or {}
+    ev = aggregate_case_evidence(cv_results)
     scope = state.get("risk_scope") or "cell"
-    risk_scope_text = (
-        "病例级（基于异常细胞占比）"
-        if scope == "case"
-        else f"细胞级提示（仅检出 {state.get('cv_result', {}).get('total_cells', 0)} 个细胞，"
-             f"占比不足以代表病例整体，不得作为病例级风险结论）"
-    )
+
+    if scope == "case":
+        scope_text = "病例级（基于异常细胞占比，样本中细胞数足以代表整体）"
+    else:
+        scope_text = (
+            f"细胞级提示（仅检出 {ev.get('total', 0)} 个细胞，"
+            f"占比不足以代表病例整体，不得作为病例级风险结论）")
+
+    dist = ev.get("class_distribution") or {}
+    dist_text = "、".join(f"{k}:{v}" for k, v in sorted(dist.items())) or "无"
+
+    top_text = "、".join(
+        f"{t['class']}(conf={t['confidence']:.2f})" for t in ev.get("top_abnormal") or []
+    ) or "无"
+
+    def _fmt(s):
+        if not s:
+            return "无可靠测量"
+        return (f"均值 {s['mean']:.3f}（中位 {s['median']:.3f}，"
+                f"范围 {s['min']:.3f}–{s['max']:.3f}，n={s['n']}）")
+
+    conflict_text = (
+        f"存在冲突证据：异常细胞分型不一致（{', '.join(ev.get('abnormal_types') or [])}）"
+        if ev.get("has_conflict") else "无冲突证据（异常细胞分型一致）")
 
     # 构建诊断上下文
     context = f'''
-    细胞检测结果:
-    - 总细胞数: {cv_results.get("total_cells", 0)}
-    - 异常细胞数: {cv_results.get("abnormal_cells", 0)}
-    - 最高风险分类: {cv_results.get("highest_risk", "")}
-    - 模型置信度: {(first_cell.get("final_confidence") or 0.0):.3f}
-    - 不确定性: {(state.get("max_uncertainty") or 0.0):.3f}
-    - 风险口径: {risk_scope_text}
+    细胞检测结果（病例级聚合）:
+    - 总细胞数: {ev.get('total', 0)}
+    - 异常细胞数: {ev.get('abnormal_count', 0)}
+    - 判定口径: {scope_text}
+    - 风险等级: {state.get('risk_level')}
+    - 决策依据: {state.get('decision_reason') or '未记录'}
 
-    形态学分析:
-    - 核质比: {nc_line}
-    - 圆形度: {(morphology.get('circularity') or 0.0):.3f}{morph_note}
+    分类分布:
+    - {dist_text}
+    - 最高风险细胞（Top-{len(ev.get('top_abnormal') or [])}）: {top_text}
+    - {conflict_text}
+
+    形态学（仅统计测量可靠的细胞）:
+    - 核质比: {_fmt(ev.get('nc_ratio'))}
+    - 圆形度: {_fmt(ev.get('circularity'))}
+    - 不可靠测量细胞数: {ev.get('morphology_unreliable', 0)}
+    - 说明: 形态学为自动测量，不可靠时不得据此得出形态学结论
+
+    不确定性:
+    - 图像级(P90 归一化熵): {(state.get('max_uncertainty') or 0.0):.3f}
+    - 细胞级 max / median: {ev.get('uncertainty_max', 0.0):.3f} / {ev.get('uncertainty_median', 0.0):.3f}
+    - 口径: {cv_results.get('uncertainty_metric', 'normalized_entropy')}，聚合 {cv_results.get('uncertainty_aggregation', 'p90')}
     '''
 
     report_prompt = ChatPromptTemplate.from_messages([
@@ -281,6 +473,21 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
             "is_complete": True
         }
 
+# ====不可判读终止====
+def unreadable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """0细胞/无法判读：终止流程，把原因作为用户可见的输出。"""
+    reason = state.get("error_message") or "未检测到可判读的宫颈细胞，无法生成诊断结论。"
+    return {
+        "diagnosis_report": f"## 无法判读\n\n{reason}",
+        "recommendations": [
+            "请重新采样或更换细胞学视野图像后重试",
+            "如图像质量存疑，建议直接人工镜检复核",
+        ],
+        "error_message": reason,
+        "is_complete": True,
+        "current_step": "unreadable",
+    }
+
 # ====可解释性辅助：Grad-CAM====
 def _compute_gradcam(state: DiagnosisState) -> Optional[Dict[str, Any]]:
     """为置信度最高的异常细胞生成 Grad-CAM"""
@@ -316,7 +523,7 @@ def _compute_gradcam(state: DiagnosisState) -> Optional[Dict[str, Any]]:
         print(f"Grad-CAM 生成失败: {e}")
         return None
 
-# ====节点6、可解释性报告====
+# ====可解释性报告====
 async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """
     生成带可解释性的综合报告
@@ -345,7 +552,8 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     '''
 
     explain_context += f'''
-    3. 不确定性分析: MC Dropout标准差={(state.get("max_uncertainty") or 0.0):.3f}
+    3. 不确定性分析: {cv_results.get("uncertainty_metric", "normalized_entropy")}={(state.get("max_uncertainty") or 0.0):.3f}
+    (图像级取 {cv_results.get("uncertainty_aggregation", "p90")} 聚合，范围 0~1, 越大越不确定)
     '''
 
     # 仅当检索到知识时追加医学依据
@@ -398,8 +606,36 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         "is_complete": True
     }
 
+def explainable_router(state: DiagnosisState) -> str:
+    """
+    判断是否需要生成可解释性报告
+    """
+    if state.get("risk_level") in ("high", "emergency", "pending", "unreadable"):
+        return "explainable_report"
+    ev_conflict = bool((state.get("cv_result") or {}).get("has_conflict"))
+    if float(state.get("max_uncertainty") or 0.0) > UNCERTAINTY_MEDIUM or ev_conflict:
+        return "explainable_report"
+    return "skip_explainable"
 
-# ====节点7、构建状态机图====
+def skip_explainable_agent(state: DiagnosisState) -> Dict[str, Any]:
+    """低风险清晰病例：跳过二次 LLM,只附加结构化摘要（零 LLM 成本）。"""
+    ev = aggregate_case_evidence(state.get("cv_result") or {})
+    dist = ev.get("class_distribution") or {}
+    summary = (
+        "\n\n---\n\n【结构化摘要(未调用 LLM)】\n"
+        f"- 检出细胞 {ev.get('total', 0)} 个，异常 {ev.get('abnormal_count', 0)} 个\n"
+        f"- 分类分布：{'、'.join(f'{k}:{v}' for k, v in sorted(dist.items())) or '无'}\n"
+        f"- 不确定性(P90 归一化熵)：{(state.get('max_uncertainty') or 0.0):.3f}\n"
+        f"- 风险等级：{state.get('risk_level')}(口径 {state.get('risk_scope')})"
+    )
+    return {
+        "diagnosis_report": (state.get("diagnosis_report") or "") + summary,
+        "current_step": "skip_explainable",
+        "is_complete": True,
+    }
+
+
+# ====构建状态机图====
 builder = StateGraph(DiagnosisState)
 
 # 添加节点
@@ -408,7 +644,11 @@ builder.add_node("prepare_clarification", prepare_clarification_agent)
 builder.add_node("clarification", clarification_agent)
 builder.add_node("deep_retrieval", deep_retrieval_agent)
 builder.add_node("generate_report", generate_report_agent)
+builder.add_node("unreadable_report", unreadable_report_agent)
 builder.add_node("explainable_report", explainable_report_agent)
+builder.add_node("post_retrieval_assessment", post_retrieval_assessment_agent)
+builder.add_node("skip_explainable", skip_explainable_agent)
+
 
 # 设置入口
 builder.set_entry_point("uncertainty_assessment")
@@ -421,8 +661,19 @@ builder.add_conditional_edges(
         "clarify": "prepare_clarification",
         "deep_retrieve": "deep_retrieval",
         "direct_report": "generate_report",
-        "re_evaluate": "uncertainty_assessment"
+        "re_evaluate": "uncertainty_assessment",
+        "unreadable": "unreadable_report"
     }
+)
+
+# 可解释性条件化
+builder.add_conditional_edges(
+    "generate_report",
+    explainable_router,
+    {
+        "explainable_report": "explainable_report",
+        "skip_explainable": "skip_explainable",
+    },
 )
 
 # 问题生成后进入中断节点等待用户回答
@@ -435,18 +686,19 @@ builder.add_conditional_edges(
     {
         "re_evaluate": "uncertainty_assessment",
         "deep_retrieve": "deep_retrieval",
-        "direct_report": "generate_report"
+        "direct_report": "generate_report", 
+        "unreadable": "unreadable_report"
     }
 )
 
 # 深度检索后进入报告生成
-builder.add_edge("deep_retrieval", "generate_report")
-
-# 直接报告后进入可解释性增强
-builder.add_edge("generate_report", "explainable_report")
+builder.add_edge("deep_retrieval", "post_retrieval_assessment")
+builder.add_edge("post_retrieval_assessment", "generate_report")
 
 # 可解释性报告后结束
 builder.add_edge("explainable_report", END)
+builder.add_edge("unreadable_report", END)
+builder.add_edge("skip_explainable", END)
 
 # 设置检查点后端
 _checkpointer_cm = AsyncRedisSaver.from_conn_string(REDIS_URL)
