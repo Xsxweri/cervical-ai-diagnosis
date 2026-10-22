@@ -84,3 +84,11 @@
     @apply hover:bg-gray-50/60 transition-colors;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-focus-in,
+  .animate-ring-in,
+  .animate-progress-line {
+    animation: none !important;
+  }
+}

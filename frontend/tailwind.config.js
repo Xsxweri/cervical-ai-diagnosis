@@ -34,12 +34,24 @@ export default {
           50: '#faf5ff', 100: '#f3e8ff', 200: '#e9d5ff',
           500: '#a855f7', 600: '#9333ea', 700: '#7e22ce',
         },
+        // ---- 登录页"对焦"设计令牌（取自 H&E 染色语汇）----
+        glass: '#F2F5F3',       // 页面底色、图像边缘
+        ink: '#12171A',         // 主文字
+        hematoxylin: '#2E3B63', // 品牌、主按钮、焦点环
+        eosin: '#A64F52',       // 错误、登记点（仅小面积）
+        muted: '#667076',       // 说明文字、辅助信息
+        hairline: '#DCE2DF',    // 输入框、分隔线
       },
       fontFamily: {
         sans: [
           '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"',
           '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"',
           '"Noto Sans SC"', 'sans-serif',
+        ],
+        // 医疗报告的书卷感：思源宋体优先，回退系统宋体
+        serif: [
+          '"Noto Serif SC"', '"Source Han Serif SC"',
+          '"Songti SC"', '"SimSun"', 'serif',
         ],
       },
       boxShadow: {
@@ -55,10 +67,29 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.6' },
         },
+        // 视野由失焦收束到清晰
+        'focus-in': {
+          '0%': { filter: 'blur(10px)', transform: 'scale(1.03)', opacity: '0.85' },
+          '100%': { filter: 'blur(0px)', transform: 'scale(1)', opacity: '1' },
+        },
+        // 对焦环淡入并缩放一次（平移由外层容器负责）
+        'ring-in': {
+          '0%': { opacity: '0', transform: 'scale(0.94)' },
+          '60%': { opacity: '1' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        // 按钮底部不确定进度线
+        'progress-line': {
+          '0%': { transform: 'translateX(-110%)' },
+          '100%': { transform: 'translateX(340%)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out',
         'pulse-soft': 'pulse-soft 1.6s ease-in-out infinite',
+        'focus-in': 'focus-in 800ms cubic-bezier(.2,.8,.2,1) both',
+        'ring-in': 'ring-in 800ms cubic-bezier(.2,.8,.2,1) both',
+        'progress-line': 'progress-line 1.1s cubic-bezier(.4,0,.6,1) infinite',
       },
     },
   },
