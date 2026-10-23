@@ -1,52 +1,44 @@
-import uuid
-import logging
-from typing import Optional, Union, Any
-from datetime import timedelta
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, message_to_dict
-from langgraph.types import Command
-from Agents.diagnosis_graph import get_graph, get_llm  # 导入图实例和LLM工厂函数
-from Agents.state import DiagnosisState
-from services.vision_service import analyze_image_from_path  # 导入CV服务
-from Prompts import render, raw
-from Prompts.clinical_content import FOLLOWUP_FALLBACK
-import json
-from core.redis_client import get_redis_client
+"""
+会话编排层：会话生命周期 + CV/Agent 图/追问流程协调。
 
-# 配置日志
+分工：
+- 序列化与 Redis 读写 -> Agents.session_store
+- 追问 Prompt 拼装     -> Agents.followup_prompt
+"""
+
+import logging
+import uuid
+from datetime import timedelta
+from typing import Optional
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.types import Command
+
+from Agents.checkpoint import get_graph
+from Agents.followup_prompt import build_followup_prompt, build_followup_system
+from Agents.llm import get_llm
+from Agents.session_store import (
+    OWNER_KEY_PREFIX,  # noqa: F401  (re-export, tests 需要)
+    SESSION_KEY_PREFIX,  # noqa: F401  (re-export)
+    assert_owner,
+    clear_session as _store_clear_session,
+    deserialize_state,
+    load_session,
+    save_owner,
+    save_session,
+    serialize_state,
+)
+from Agents.state import DiagnosisState
+from Prompts.clinical_content import FOLLOWUP_FALLBACK
+from core.redis_client import get_redis_client
+from services.vision_service import analyze_image_from_path  # 导入CV服务
+
 logger = logging.getLogger(__name__)
 
-SESSION_KEY_PREFIX = "session:"
-OWNER_KEY_PREFIX = "session_owner:"
-_MESSAGE_KEYS = ("messages", "conversation_history")
+# 兼容旧引用：tests/test_unit.py 直接 import 这两个私有名
+_serialize_state = serialize_state
+_deserialize_state = deserialize_state
 
-def _serialize_state(state: Union[dict,Any]) -> str:
-    """将 DiagnosisState 序列化为 JSON 字符串，特殊处理 BaseMessage 列表"""
-    data = dict(state)
-    data.pop("__interrupt__", None)
-    for key in _MESSAGE_KEYS:
-        msgs = data.get(key) or []
-        data[key] = [message_to_dict(m) for m in msgs if isinstance(m, BaseMessage)]
-    return json.dumps(data, ensure_ascii=False, default=str)
-
-def _deserialize_state(raw: str) -> dict:
-    """从 JSON 字符串反序列化为 Dict"""
-    data = json.loads(raw)
-    for key in _MESSAGE_KEYS:
-        if data.get(key):
-            data[key] = [_msg_from_dict(d) for d in data[key]]
-    return data
-
-def _msg_from_dict(d: dict) -> BaseMessage:
-    """根据 type 字段还原具体的 Message 类型"""
-    msg_type = d.get("type", "")
-    content = d.get("data", {}).get("content", "")
-    if msg_type == "human":
-        return HumanMessage(content=content)
-    elif msg_type == "ai":
-        return AIMessage(content=content)
-    elif msg_type == "system":
-        return SystemMessage(content=content)
-    return HumanMessage(content=content)
 
 class ConversationManager:
     """
@@ -62,57 +54,30 @@ class ConversationManager:
     def __init__(self):
         self.session_ttl = timedelta(days=1)  # 会话过期时间
 
-    async def _save_session(self, session_id: str, state: Union[dict,Any]):
+    @property
+    def _ttl_seconds(self) -> int:
+        return int(self.session_ttl.total_seconds())
+
+    # 存储代理
+    async def _save_session(self, session_id: str, state):
         """序列化状态并写入 Redis，同时设置 TTL"""
-        key = f"{SESSION_KEY_PREFIX}{session_id}"
-        redis_client = await get_redis_client()
-        await redis_client.setex(key, int(self.session_ttl.total_seconds()), _serialize_state(state))
+        await save_session(get_redis_client, session_id, state, self._ttl_seconds)
 
     async def _load_session(self, session_id: str) -> Optional[dict]:
         """从Redis读取并反序列化状态"""
-        key = f"{SESSION_KEY_PREFIX}{session_id}"
-        redis_client = await get_redis_client()
-        raw = await redis_client.get(key)
-        if raw is None:
-            return None
-        try:
-            return _deserialize_state(raw)
-        except Exception as e:
-            logger.error(f"反序列化会话 [{session_id}] 失败: {e}")
-            return None
+        return await load_session(get_redis_client, session_id)
 
     async def _save_owner(self, session_id: str, owner_id: Optional[str]):
         """记录会话归属，TTL 与会话一致；供后续越权校验。"""
-        if not owner_id:
-            logger.warning(f"会话 [{session_id}] 未提供操作者身份，跳过归属记录")
-            return
-        redis_client = await get_redis_client()
-        await redis_client.setex(
-            f"{OWNER_KEY_PREFIX}{session_id}",
-            int(self.session_ttl.total_seconds()),
-            str(owner_id),
-        )
+        await save_owner(get_redis_client, session_id, owner_id, self._ttl_seconds)
 
     async def _assert_owner(self, session_id: str, requester_id: Optional[str]):
         """校验会话归属，失败抛 PermissionError（fail-closed）。"""
-        if not requester_id:
-            raise PermissionError("缺少操作者身份，拒绝访问该会话")
-        redis_client = await get_redis_client()
-        owner = await redis_client.get(f"{OWNER_KEY_PREFIX}{session_id}")
-        if owner is None:
-            # 历史会话（本次修复前创建）无归属记录 → 拒绝，避免任意 session_id 越权
-            raise PermissionError(
-                f"会话 [{session_id}] 无归属记录，拒绝访问（请重新发起诊断）")
-        if str(owner) != str(requester_id):
-            logger.warning(
-                f"越权访问会话 [{session_id}]: owner={owner} requester={requester_id}")
-            raise PermissionError("无权访问该会话")
+        await assert_owner(get_redis_client, session_id, requester_id)
 
     @staticmethod
     def _apply_interrupt(state: dict) -> dict:
-        """
-        从图返回值中提取 interrupt 载荷，转换为前端可消费的字段
-        """
+        """从图返回值中提取 interrupt 载荷，转换为前端可消费的字段"""
         interrupted = state.pop("__interrupt__", None)
         if interrupted:
             first = interrupted[0] if isinstance(interrupted, (list, tuple)) else interrupted
@@ -122,22 +87,19 @@ class ConversationManager:
             state["is_complete"] = False
         return state
 
-    async def start_diagnosis(self, image_path: str, session_id:  Optional[str] = None, owner_id: Optional[str] = None) -> dict :
-        """
-        启动新诊断流程：执行 CV 分析 -> 初始化状态 -> 触发 Agent 图
-
-        Args:
-            image_path: 上传的图片路径
-            session_id: 可选会话ID
-
-        Returns:
-            更新后的状态对象
-        """
+    # 主流程
+    async def start_diagnosis(
+        self,
+        image_path: str,
+        session_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
+    ) -> dict:
+        """启动新诊断流程：执行 CV 分析 -> 初始化状态 -> 触发 Agent 图"""
         # 1. 生成会话ID
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        # 2. 调用视觉服务进行细胞分析 (这会触发 YOLO + ResNet50 双模型推理)
+        # 2. 调用视觉服务进行细胞分析 (YOLO + 分类器双模型推理)
         logger.info(f"会话 [{session_id}] 开始CV图像分析: {image_path}")
         try:
             cv_results = await analyze_image_from_path(image_path)
@@ -154,15 +116,16 @@ class ConversationManager:
             "conversation_history": [HumanMessage(content="用户上传了宫颈细胞图片，开始AI辅助诊断。")],
             "current_step": "uncertainty_assessment",
             "clarification_rounds": 0,
-            "is_complete": False
+            "is_complete": False,
         }
 
-        # 4. 运行 Agent 图
-        # 必须传入config以支持LangGraph的Checkpointer
+        # 4. 运行 Agent 图（必须传 config 以支持 Checkpointer）
         config = {"configurable": {"thread_id": session_id}}
 
         try:
-            final_state = self._apply_interrupt(await get_graph().ainvoke(initial_state, config))
+            final_state = self._apply_interrupt(
+                await get_graph().ainvoke(initial_state, config)
+            )
             await self._save_session(session_id, final_state)
             await self._save_owner(session_id, owner_id)
             logger.info(f"会话 [{session_id}] 初始诊断完成，风险等级: {final_state.get('risk_level')}")
@@ -171,9 +134,13 @@ class ConversationManager:
             logger.error(f"会话 [{session_id}] Agent流程执行失败: {e}", exc_info=True)
             raise
 
-    async def process_clarification(self, session_id: str, user_input: str, requester_id: Optional[str] = None) -> dict:
-        """
-        处理用户对澄清问题的回答。
+    async def process_clarification(
+        self,
+        session_id: str,
+        user_input: str,
+        requester_id: Optional[str] = None,
+    ) -> dict:
+        """处理用户对澄清问题的回答。
 
         逻辑：
         1. 校验会话确实处于等待澄清状态
@@ -199,19 +166,14 @@ class ConversationManager:
             logger.error(f"会话 [{session_id}] 澄清处理失败: {e}", exc_info=True)
             raise
 
-    async def followup_chat(self, session_id: str, user_input: str, time_location: str = "", requester_id: Optional[str] = None) -> str:
-        """
-        诊断完成后的自由追问。
-        此方法不修改核心诊断状态，仅基于已有信息进行问答。
-
-        Args:
-            session_id: 会话ID
-            user_input: 用户的追问
-            time_location: 时空上下文字符串 (可选)
-            requester_id: 请求者ID
-        Returns:
-            AI的回复文本
-        """
+    async def followup_chat(
+        self,
+        session_id: str,
+        user_input: str,
+        time_location: str = "",
+        requester_id: Optional[str] = None,
+    ) -> str:
+        """诊断完成后的自由追问。不修改核心诊断状态，仅基于已有信息问答。"""
         await self._assert_owner(session_id, requester_id)
         state = await self._load_session(session_id)
         if not state:
@@ -223,62 +185,22 @@ class ConversationManager:
         if state.get("risk_level") == "unreadable":
             return "该图像未能判读，暂无可讨论的诊断结论，请重新上传合格图像。"
 
-        # 1. 获取 LLM 实例
+        # 1. 先构造客户端：配置错误应直接抛出，不被兜底吞掉
         llm = get_llm()
 
-        # 2. 构建带有时空上下文的 Prompt
-        # 如果传入了 time_location，则使用传入的值，否则使用默认值（兼容旧调用）
-        ctx_time_location = time_location or f"<time_location>\n当前时间：未知\n当前地点：未知\n</time_location>"
+        # 2. 构建 Prompt
+        followup_prompt = build_followup_prompt(state, user_input, time_location)
 
-        # 提取诊断报告摘要（防止上下文过长）
-        report_snippet = (state.get("diagnosis_report") or "")[:1200]
-        recommendations = "\n".join([f"- {r}" for r in (state.get("recommendations") or [])])
-        risk_level = state.get("risk_level") or "未知"
-        risk_scope = state.get("risk_scope") or "cell"
-
-        # 补充细胞级证据与文献证据
-        cv = state.get("cv_result") or {}
-        cells = cv.get("cells") or []
-        n_total = int(cv.get("total_cells", 0) or 0)
-        n_abn = int(cv.get("abnormal_cells", 0) or 0)
-        class_dist = {}
-        for c in cells:
-            k = c.get("final_class")
-            class_dist[k] = class_dist.get(k, 0) + 1
-        dist_text = "、".join(f"{k}:{v}" for k, v in sorted(class_dist.items())) or "无"
-
-        knowledge = state.get("retrieved_knowledge") or []
-        kb_text = "\n".join(
-            f"- {(d.get('content') or '')[:150]}({d.get('source', '未知')} 第{d.get('page', 0)}页)"
-            for d in knowledge[:3]) or "（本次未检索到文献依据）"
-        
-        # 构建最终的 Prompt
-        # 这里将 time_location 插入到了Prompt的最开始部分
-        followup_prompt = render(
-            "followup_user",
-            time_location=ctx_time_location,
-            risk_level=risk_level,
-            risk_scope=risk_scope,
-            report_snippet=report_snippet,
-            recommendations=recommendations,
-            total_cells=n_total,
-            abnormal_cells=n_abn,
-            class_distribution=dist_text,
-            uncertainty=f"{float(state.get('max_uncertainty') or 0.0):.3f}",
-            knowledge=kb_text,
-            user_input=user_input,
-        )
-
-        # 3. 调用LLM并更新历史
+        # 3. 拼装消息
         history = list(state.get("conversation_history") or [])
         history.append(HumanMessage(content=user_input))
-
         messages = [
-            SystemMessage(content=raw("followup_system")),
+            SystemMessage(content=build_followup_system()),
             *history,
-            HumanMessage(content=followup_prompt)
+            HumanMessage(content=followup_prompt),
         ]
 
+        # 4. 调用 LLM 并更新历史
         try:
             response = await llm.ainvoke(messages)
         except Exception as e:
@@ -296,7 +218,4 @@ class ConversationManager:
 
     async def clear_session(self, session_id: str) -> bool:
         """清除会话"""
-        key = f"{SESSION_KEY_PREFIX}{session_id}"
-        redis_client = await get_redis_client()
-        result = await redis_client.delete(key)
-        return result > 0
+        return await _store_clear_session(get_redis_client, session_id)
