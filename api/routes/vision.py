@@ -28,6 +28,10 @@ from services.vision_service import (
     DEVICE,
     MC_DROPOUT_SAMPLES,
     MULTI_WEIGHTS,
+    MULTI_LABEL_SPACE,
+    DUAL_MODE,
+    PRIMARY_SPACE,
+    AUX_SPACE,
     YOLO_WEIGHTS,
     analyze_pil_image,
 )
@@ -158,8 +162,32 @@ async def analyze_zip(request: Request, upload_file: UploadFile = File(...)):
     return results
 
 
-@router.get("/health", summary="健康检查")
+@router.get("/health", summary="存活探针")
 async def health_check():
+    """
+    公开存活探针。
+
+    返回结果：
+      {"status": "ok"}
+    """
+    return {"status": "ok"}
+
+
+@router.get(
+    "/api/system/info",
+    summary="系统信息（需鉴权）",
+    dependencies=[Depends(verify_token)],
+)
+async def system_info():
+    """返回设备、模型权重路径、阈值与 RAG 可用性。"""
+    # 检测知识库可用性
+    from Agents.knowledge import UnavailableKnowledgeBase, get_kb
+
+    try:
+        rag_available = not isinstance(get_kb(), UnavailableKnowledgeBase)
+    except RuntimeError:
+        # init_kb 尚未完成
+        rag_available = False
     return {
         "status": "ok",
         "device": str(DEVICE),
@@ -167,6 +195,10 @@ async def health_check():
             "yolo": YOLO_WEIGHTS,
             "二分类": BINARY_WEIGHTS,
             "多分类": MULTI_WEIGHTS,
+            "多分类标签空间": MULTI_LABEL_SPACE,
+            "dual模式": DUAL_MODE,
+            "主空间": PRIMARY_SPACE,
+            "辅助空间": AUX_SPACE,
         },
         "config": {
             "mc_dropout_samples": MC_DROPOUT_SAMPLES,
@@ -174,4 +206,5 @@ async def health_check():
             "不确定阈值_medium": UNCERTAINTY_MEDIUM,
             "异常的CONF阈值": ABNORMAL_CONF_THRESHOLD,
         },
+        "rag_available": rag_available,
     }

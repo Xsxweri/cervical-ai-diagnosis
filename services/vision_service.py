@@ -1,9 +1,7 @@
-import io
 import os
 import json
 import glob
 import asyncio
-import zipfile
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 from enum import Enum
@@ -21,8 +19,12 @@ from utils.label_mapping import (
     BINARY_CLASSES,
     BINARY_ABNORMAL_IDX,
     is_abnormal_binary,
-    MULTICLASS_CLASSES,
     NUCLEUS_CLASS_NAME,
+    get_multiclass_classes,
+    abnormal_classes_for,
+    risk_floor_for,
+    max_risk,
+    dual_conflict_reason,
 )
 from utils.uncertainty import (
     UNCERTAINTY_HIGH,
@@ -45,28 +47,73 @@ from utils.uncertainty import (
 logger = logging.getLogger("vision_service")
 
 #配置项(支持环境变量覆盖)
-YOLO_WEIGHTS = os.getenv("YOLO_WEIGHTS", "runs/detect/cervical_cell_exp4/weights/best.pt")
+YOLO_WEIGHTS = os.getenv("YOLO_WEIGHTS", "runs/detect/cervical_cell_v2/weights/best.pt")
 BINARY_WEIGHTS = os.getenv("BINARY_WEIGHTS", "outputs/models/best_resnet50_binary_model.pth")
-MULTI_WEIGHTS = os.getenv("MULTI_WEIGHTS", "outputs/models/best_resnet50_multiclass_sipakmed_model.pth")
+
+# 多分类权重按标签空间注册；MULTI_LABEL_SPACE 决定用哪一个
+MULTICLASS_WEIGHTS_BY_SPACE = {
+    "sipakmed": "outputs/models/best_resnet50_multiclass_sipakmed_model.pth",
+    "herlev": "outputs/models/best_resnet50_multiclass_herlev_model.pth",
+}
+
+# dual 模式：主空间固定 herlev（病理分级，临床信息更细），辅助空间 sipakmed（形态分型）。
+# 刻意不做 domain classifier 自动分流：图像风格无法从像素可靠判断，
+# 一旦判错会把样本静默送进错误标签空间，输出仍是"合法类名"，下游无从察觉。
+DUAL_PRIMARY_SPACE = "herlev"
+DUAL_AUX_SPACE = "sipakmed"
+
+MULTI_LABEL_SPACE = os.getenv("MULTI_LABEL_SPACE", "sipakmed").strip().lower()
+if MULTI_LABEL_SPACE not in (*MULTICLASS_WEIGHTS_BY_SPACE, "dual"):
+    raise RuntimeError(
+        f"MULTI_LABEL_SPACE='{MULTI_LABEL_SPACE}' 非法，可选: sipakmed / herlev / dual"
+    )
+
+DUAL_MODE = MULTI_LABEL_SPACE == "dual"
+PRIMARY_SPACE = DUAL_PRIMARY_SPACE if DUAL_MODE else MULTI_LABEL_SPACE
+AUX_SPACE = DUAL_AUX_SPACE if DUAL_MODE else None
+
+# 显式指定 MULTI_WEIGHTS 时以它为准；dual 模式下忽略，避免主/辅权重混淆
+if DUAL_MODE and os.getenv("MULTI_WEIGHTS"):
+    logger.warning("dual 模式下忽略 MULTI_WEIGHTS：权重由 DUAL_PRIMARY_SPACE 决定")
+MULTI_WEIGHTS = (
+    MULTICLASS_WEIGHTS_BY_SPACE[PRIMARY_SPACE] if DUAL_MODE
+    else (os.getenv("MULTI_WEIGHTS") or MULTICLASS_WEIGHTS_BY_SPACE[PRIMARY_SPACE])
+)
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MC_DROPOUT_SAMPLES = int(os.getenv("MC_DROPOUT_SAMPLES", "10"))
 ABNORMAL_CONF_THRESHOLD = float(os.getenv("ABNORMAL_CONF_THRESHOLD", "0.5"))
 
-# 类别定义
+# 二分类索引顺序必须锁死（历史 bug：0/1 反向导致全部误报）
 assert BINARY_CLASSES[BINARY_ABNORMAL_IDX] == "abnormal", "二分类索引顺序被破坏！"
-assert MULTICLASS_CLASSES[0] == "Dyskeratotic", "多分类索引顺序被破坏！"
+# 多分类顺序不再用全局断言，改为按当前标签空间取 canonical
+_CANONICAL_MULTI = get_multiclass_classes(PRIMARY_SPACE)
 
-def _load_classes_sidecar(weights_path: str, fallback, expected_n: int):
-    """优先读取与权重同名的 .classes.json；校验长度后返回，否则回退 canonical。"""
+def _load_classes_sidecar(weights_path: str, fallback, expected_n: int, expected_space: str | None = None):
+    """优先读取与权重同名的 .classes.json: 校验长度后返回, 否则回退 canonical"""
     sidecar = os.path.splitext(weights_path)[0] + ".classes.json"
     classes = None
+    meta = {}
     if os.path.isfile(sidecar):
         try:
             with open(sidecar, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            classes = data.get("classes") if isinstance(data, dict) else data
+            if isinstance(data, dict):
+                classes = data.get("classes")
+                meta = data
+            else:
+                classes = data
         except Exception as e:
             logger.warning(f"读取类别表 sidecar 失败({sidecar}): {e}")
+
+    if expected_space and meta.get("label_space"):
+        if meta["label_space"] != expected_space:
+            raise RuntimeError(
+                f"{os.path.basename(sidecar)} 的 label_space='{meta['label_space']}' "
+                f"与当前配置 MULTI_LABEL_SPACE='{expected_space}' 不一致，"
+                f"拒绝加载以免标签错配。请同步调整 MULTI_LABEL_SPACE 或 MULTI_WEIGHTS。"
+            )
+
     if isinstance(classes, list) and classes:
         if len(classes) != expected_n:
             raise RuntimeError(
@@ -88,7 +135,7 @@ def _require_file(path: str, what: str):
         raise FileNotFoundError(
             f"{what} 权重不存在: {path}\n"
             f"  请先训练该模型，或用环境变量覆盖路径"
-            f"（YOLO_WEIGHTS / BINARY_WEIGHTS / MULTI_WEIGHTS）。"
+            f"(YOLO_WEIGHTS / BINARY_WEIGHTS / MULTI_WEIGHTS / MULTI_LABEL_SPACE)。"
         )
 
 # 模型管理器
@@ -98,9 +145,20 @@ class DualModelManager:
     def __init__(self):
         self.detector: Optional[YOLO] = None
         self.binary_classifier: Optional[CervicalCancerModel] = None
-        self.multi_classifier: Optional[CervicalCancerModel] = None
         self.binary_classes: List[str] = list(BINARY_CLASSES)
-        self.multi_classes: List[str] = list(MULTICLASS_CLASSES)
+
+        # 主（primary）多分类
+        self.multi_classifier: Optional[CervicalCancerModel] = None
+        self.multi_label_space: str = PRIMARY_SPACE
+        self.multi_classes: List[str] = list(get_multiclass_classes(PRIMARY_SPACE))
+        self.multi_abnormal_classes: set = abnormal_classes_for(PRIMARY_SPACE)
+
+        # 辅助（auxiliary）多分类：仅 dual 模式加载
+        self.aux_classifier: Optional[CervicalCancerModel] = None
+        self.aux_label_space: Optional[str] = AUX_SPACE
+        self.aux_classes: List[str] = list(get_multiclass_classes(AUX_SPACE)) if AUX_SPACE else []
+        self.aux_abnormal_classes: set = abnormal_classes_for(AUX_SPACE) if AUX_SPACE else set()
+
         self._load_all()
     
     def _load_all(self):
@@ -120,17 +178,25 @@ class DualModelManager:
             self.binary_classifier.load_state_dict(binary_state)
             self.binary_classifier.to(DEVICE).eval()
 
-            # 3. 多分类模型
-            _require_file(MULTI_WEIGHTS, "多分类")
-            logger.info(f"[DualModel] 从 {MULTI_WEIGHTS} 加载多分类器")
-            multi_state = torch.load(MULTI_WEIGHTS, map_location=DEVICE, weights_only=True)
-            n_multi = self._fc_out_dim(multi_state)
-            self.multi_classes = _load_classes_sidecar(MULTI_WEIGHTS, MULTICLASS_CLASSES, n_multi)
-            self.multi_classifier = self._build_classifier(multi_state, num_classes=n_multi)
-            self.multi_classifier.load_state_dict(multi_state)
-            self.multi_classifier.to(DEVICE).eval()
+            # 3. 多分类（主）
+            self.multi_classifier, self.multi_classes = self._load_one_multiclass(
+                PRIMARY_SPACE, MULTI_WEIGHTS
+            )
+            self.multi_abnormal_classes = abnormal_classes_for(PRIMARY_SPACE)
 
-            logger.info("三个模型全部顺利加载.")
+            # 4. 多分类（辅，仅 dual）
+            if DUAL_MODE:
+                aux_weights = MULTICLASS_WEIGHTS_BY_SPACE[AUX_SPACE]
+                self.aux_classifier, self.aux_classes = self._load_one_multiclass(
+                    AUX_SPACE, aux_weights
+                )
+                self.aux_abnormal_classes = abnormal_classes_for(AUX_SPACE)
+                logger.info(f"[DualModel] dual 模式：辅助空间 {AUX_SPACE} 已加载")
+
+            logger.info(
+                f"模型全部加载完成 (primary={PRIMARY_SPACE}"
+                f"{', aux=' + AUX_SPACE if DUAL_MODE else ''})"
+            )
         except Exception as e:
             logger.error(f"[Dualmodel] 模型加载失败: {e}", exc_info=True)
             raise RuntimeError(f"模型初始化失败: {e}")
@@ -159,6 +225,20 @@ class DualModelManager:
         if fc is None:
             raise RuntimeError("state_dict 中找不到 fc.weight,无法确定类别数。")
         return int(fc.shape[0])
+
+    def _load_one_multiclass(self, space: str, weights: str):
+        """加载单个多分类器，返回 (model, classes)。sidecar 空间不符直接报错。"""
+        _require_file(weights, f"多分类({space})")
+        logger.info(f"[DualModel] 从 {weights} 加载多分类器 (space={space})")
+        state = torch.load(weights, map_location=DEVICE, weights_only=True)
+        n = self._fc_out_dim(state)
+        classes = _load_classes_sidecar(
+            weights, get_multiclass_classes(space), n, expected_space=space
+        )
+        model = self._build_classifier(state, num_classes=n)
+        model.load_state_dict(state)
+        model.to(DEVICE).eval()
+        return model, classes
 
     # 二分类预测
     def predict_binary(self, tensor: torch.Tensor) -> Tuple[int, float, np.ndarray]:
@@ -328,6 +408,13 @@ def _analyze_pil_image_sync(
         ),
         "risk_level": None,
         "risk_scope": None,
+        "label_space": MULTI_LABEL_SPACE,
+        "multiclass_abnormal_classes": sorted(abnormal_classes_for(MULTI_LABEL_SPACE)),
+        "grading_conflict_count": 0,
+        "review_required": False,
+        "dual_mode": DUAL_MODE,
+        "primary_label_space": PRIMARY_SPACE,
+        "aux_label_space": AUX_SPACE,
         "uncertainty_thresholds": {"high": UNCERTAINTY_HIGH, "medium": UNCERTAINTY_MEDIUM},
         "max_uncertainty": 0.0,
         "uncertainty_metric": METRIC_NAME,
@@ -380,11 +467,20 @@ def _analyze_pil_image_sync(
 
         # ---- Step 3: 多分类（仅异常子集，一次前向）----
         multi_probs_map: Dict[int, np.ndarray] = {}
+        aux_probs_map: Dict[int, np.ndarray] = {}
         abnormal_idx = [i for i, f in enumerate(abnormal_flags) if f]
         if abnormal_idx:
             with torch.no_grad():
                 out = torch.softmax(mgr.multi_classifier(batch[abnormal_idx]), dim=1).cpu().numpy()
             multi_probs_map = {i: out[pos] for pos, i in enumerate(abnormal_idx)}
+
+            # dual：辅助空间只用于一致性校验，不做 MC Dropout（控成本）
+            if mgr.aux_classifier is not None:
+                with torch.no_grad():
+                    aux_out = torch.softmax(
+                        mgr.aux_classifier(batch[abnormal_idx]), dim=1
+                    ).cpu().numpy()
+                aux_probs_map = {i: aux_out[pos] for pos, i in enumerate(abnormal_idx)}
 
         # ---- Step 4: MC Dropout（按活跃模型分组，各一次批量采样）----
         morph_tool = MorphologyTool()
@@ -404,6 +500,9 @@ def _analyze_pil_image_sync(
                 bin_idx = int(bin_idx_all[i])
                 bin_conf = float(bin_probs_all[i][bin_idx])
 
+                auxiliary = None
+                dual_conflict = False
+
                 if want_abnormal:
                     probs = multi_probs_map[i]
                     cls_idx = int(probs.argmax())
@@ -411,11 +510,31 @@ def _analyze_pil_image_sync(
                     final_conf = float(probs[cls_idx])
                     prob_dict = {n: round(float(p), 4)
                                  for n, p in zip(mgr.multi_classes, probs)}
+                    # 主空间把二分类判为异常的细胞归到非异常类 → 定级冲突
+                    grading_conflict = final_class not in mgr.multi_abnormal_classes
+
+                    # dual：跑一致性校验，不做择优
+                    if mgr.aux_classifier is not None:
+                        aux_probs = aux_probs_map[i]
+                        aux_idx = int(aux_probs.argmax())
+                        aux_class = mgr.aux_classes[aux_idx]
+                        reason = dual_conflict_reason(final_class, aux_class)
+                        dual_conflict = reason is not None
+                        auxiliary = {
+                            "label_space": mgr.aux_label_space,
+                            "class": aux_class,
+                            "confidence": round(float(aux_probs[aux_idx]), 4),
+                            "probabilities": {n: round(float(p), 4)
+                                              for n, p in zip(mgr.aux_classes, aux_probs)},
+                            "conflict": dual_conflict,
+                            "conflict_reason": reason,
+                        }
                 else:
                     final_class = mgr.binary_classes[bin_idx]
                     final_conf = bin_conf
                     prob_dict = {n: round(float(p), 4)
                                  for n, p in zip(mgr.binary_classes, bin_probs_all[i])}
+                    grading_conflict = False
 
                 cells.append({
                     "bbox": bbox,
@@ -429,6 +548,9 @@ def _analyze_pil_image_sync(
                     "uncertainty_std": round(float(np.max(std_probs[pos])), 4),
                     "probabilities": prob_dict,
                     "morphology": morph_tool.run(crops[i]),   # CPU，无法批处理
+                    "grading_conflict": grading_conflict,
+                    "dual_conflict": dual_conflict,
+                    "auxiliary": auxiliary,
                 })
 
         cells.sort(key=lambda c: (c["bbox"][1], c["bbox"][0]))   # 输出顺序稳定
@@ -446,8 +568,22 @@ def _analyze_pil_image_sync(
             image_uncertainty = float(np.percentile(per_cell_uncertainty, UNCERTAINTY_PERCENTILE))
         else:
             image_uncertainty = 0.0
+        
         ratio = abnormal_cells / total_cells if total_cells else 0.0
         coarse_risk = risk_level_from_ratio(ratio)
+
+        # 严重度下限：单个 CIS / CIN3 不得被"占比低"稀释成 low
+        floors = [
+            risk_floor_for(c.get("final_class"), mgr.multi_label_space)
+            for c in cells
+            if c["binary_result"]["class"] == BINARY_CLASSES[BINARY_ABNORMAL_IDX]
+        ]
+        coarse_risk = max_risk(coarse_risk, *[f for f in floors if f])
+
+        # 结论冲突：抬到高不确定区间，让 Agent 走"追问 → 检索 → 证据不足"路径
+        conflict_count = sum(1 for c in cells if c.get("grading_conflict") or c.get("dual_conflict"))
+        if conflict_count:
+            image_uncertainty = max(image_uncertainty, UNCERTAINTY_HIGH + 0.01)
 
         return {
             "total_cells": total_cells,
@@ -461,6 +597,13 @@ def _analyze_pil_image_sync(
             "risk_level": coarse_risk,
             "risk_scope": risk_scope_for(total_cells), 
             "max_uncertainty": round(image_uncertainty, 4),
+            "label_space": mgr.multi_label_space,
+            "multiclass_abnormal_classes": sorted(mgr.multi_abnormal_classes),
+            "grading_conflict_count": conflict_count,
+            "review_required": conflict_count > 0,
+            "dual_mode": DUAL_MODE,
+            "primary_label_space": mgr.multi_label_space,
+            "aux_label_space": mgr.aux_label_space,
             "uncertainty_metric": METRIC_NAME,
             "uncertainty_aggregation": f"p{UNCERTAINTY_PERCENTILE}",
             "uncertainty_thresholds": {

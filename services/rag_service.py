@@ -5,7 +5,7 @@ from langchain_community.document_loaders import PyPDFLoader
 import os
 import torch
 import asyncio
-from typing import List, Dict, Any
+from typing import List
 from concurrent.futures import ThreadPoolExecutor
 
 vector_store_executor = ThreadPoolExecutor(max_workers=2)
@@ -221,7 +221,16 @@ class MedicalKnowledgeBase:
             "Parabasal": "副基底层细胞 萎缩性阴道炎 低雌激素状态细胞学表现",
 
             # 成熟度分层
-            "Superficial-Intermediate": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
+            "Superficial-Intermediate": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读",
+
+            # ===Herlev 7 级病理分级（ordinal，按严重度递增）===
+            "normal_superficial":  "表层鳞状细胞 正常细胞学 NILM 判读要点",
+            "normal_intermediate": "中层鳞状细胞 成熟指数 激素影响判读",
+            "normal_columnar": "颈管柱状细胞 取材质量 腺上皮细胞判读",
+            "light_dysplastic": "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔",
+            "moderate_dysplastic": "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则",
+            "severe_dysplastic": "重度异型增生 CIN3 HSIL 锥切与随访管理",
+            "carcinoma_in_situ": "原位癌 CIS 高级别上皮内病变 诊断标准与治疗",
         }
         query = query_map.get(classification)
         if query is None:

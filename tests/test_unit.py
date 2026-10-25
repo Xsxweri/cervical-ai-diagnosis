@@ -47,8 +47,20 @@ def test_decision_router():
 
 # --- 不确定性分级 ---
 def test_high_uncertainty_goes_clarify():
-    out = uncertainty_assessment_agent({"cv_result": {"max_uncertainty": 0.9}})
+    out = uncertainty_assessment_agent(
+        {"cv_result": {"max_uncertainty": 0.9, "total_cells": 5, "abnormal_cells": 3}}
+    )
     assert out["action"] == "clarify" and out["risk_level"] == "pending"
+
+
+def test_missing_total_cells_is_treated_as_unreadable():
+    """契约：未提供 total_cells 时一律视为不可判读（不得静默假设"有细胞"）。
+
+    存在原因：total_cells 默认 0，而 0 有特殊语义。
+    若为"让测试通过"把默认值改成 1，一张空白图会被判成正常细胞。
+    """
+    out = uncertainty_assessment_agent({"cv_result": {"max_uncertainty": 0.9}})
+    assert out["action"] == "unreadable"
 
 
 def test_low_uncertainty_goes_direct_report():
@@ -57,8 +69,11 @@ def test_low_uncertainty_goes_direct_report():
     )
     assert out["action"] == "direct_report" and out["risk_level"] == "low"
 
+
 def test_medium_uncertainty_goes_deep_retrieve():
-    out = uncertainty_assessment_agent({"cv_result": {"max_uncertainty": 0.5}})
+    out = uncertainty_assessment_agent(
+        {"cv_result": {"max_uncertainty": 0.5, "total_cells": 5, "abnormal_cells": 1}}
+    )
     assert out["action"] == "deep_retrieve" and out["risk_level"] == "medium"
 
 # --- 二分类映射修正回归（Metaplastic/Parabasal 应为 normal）---
@@ -117,9 +132,10 @@ def test_training_multiclass_space_matches_canonical():
 
 
 def test_inference_multiclass_matches_canonical():
-    from utils.label_mapping import MULTICLASS_CLASSES
+    """推理端 canonical 必须与当前 MULTI_LABEL_SPACE 对应的标签空间一致。"""
+    from utils.label_mapping import get_multiclass_classes
     vs = pytest.importorskip("services.vision_service")
-    assert list(vs.MULTICLASS_CLASSES) == list(MULTICLASS_CLASSES)
+    assert list(vs._CANONICAL_MULTI) == get_multiclass_classes(vs.MULTI_LABEL_SPACE)
 
 # --- Herlev 病理分级标签空间 ---
 def test_herlev_classes_canonical():
@@ -195,6 +211,19 @@ def test_se_path_output_shape_unchanged():
     with torch.no_grad():
         f = m.forward_features(torch.randn(1, 3, 224, 224))
     assert f.dim() == 2 and f.shape[0] == 1
+
+def test_high_uncertainty_goes_clarify():
+    out = uncertainty_assessment_agent(
+        {"cv_result": {"max_uncertainty": 0.9, "total_cells": 5, "abnormal_cells": 3}}
+    )
+    assert out["action"] == "clarify" and out["risk_level"] == "pending"
+
+
+def test_medium_uncertainty_goes_deep_retrieve():
+    out = uncertainty_assessment_agent(
+        {"cv_result": {"max_uncertainty": 0.5, "total_cells": 5, "abnormal_cells": 1}}
+    )
+    assert out["action"] == "deep_retrieve" and out["risk_level"] == "medium"
 
 # --- 会话序列化往返 ---
 def test_serialize_roundtrip():
@@ -341,7 +370,7 @@ def test_agent_risk_uses_shared_judgement():
     """Agent 状态机的 risk_level 必须与共享判据一致（防止再次内联分叉）。"""
     from utils.uncertainty import risk_level_from_ratio
     # 低不确定性 + 无异常 → low；低不确定性 + 全异常 → emergency
-    for abnormal, total, expect in ((0, 10, "low"), (3, 10, "medium"),
+    for abnormal, total, expect in ((0, 10, "low"), (2, 10, "medium"),
                                     (5, 10, "high"), (9, 10, "emergency")):
         out = uncertainty_assessment_agent(
             {"cv_result": {"max_uncertainty": 0.01,
@@ -460,3 +489,91 @@ def test_case_evidence_aggregation():
     assert ev["morphology_unreliable"] == 1
     assert ev["nc_ratio"]["n"] == 1
     assert ev["top_abnormal"][0]["class"] == "Dyskeratotic"
+
+# --- 标签空间：三分法与 Herlev 分级 ---
+def test_sipakmed_three_way_split_is_exclusive():
+    """正常 / 良性 / 异常 三档互斥，并集等于全空间。"""
+    from utils.label_mapping import (
+        SIPAKMED_CLASSES, SIPAKMED_ABNORMAL_CLASSES,
+        SIPAKMED_BENIGN_CLASSES, SIPAKMED_NORMAL_CLASSES,
+    )
+    a, b, n = SIPAKMED_ABNORMAL_CLASSES, SIPAKMED_BENIGN_CLASSES, SIPAKMED_NORMAL_CLASSES
+    assert a.isdisjoint(b) and a.isdisjoint(n) and b.isdisjoint(n)
+    assert a | b | n == set(SIPAKMED_CLASSES)
+
+
+def test_herlev_sets_partition_space():
+    from utils.label_mapping import HERLEV_CLASSES, HERLEV_ABNORMAL_CLASSES, HERLEV_NORMAL_CLASSES
+    assert HERLEV_ABNORMAL_CLASSES.isdisjoint(HERLEV_NORMAL_CLASSES)
+    assert HERLEV_ABNORMAL_CLASSES | HERLEV_NORMAL_CLASSES == set(HERLEV_CLASSES)
+
+
+def test_herlev_risk_floor_monotonic():
+    """严重度越高，风险下限不得更低。"""
+    from utils.label_mapping import HERLEV_RISK_FLOOR, HERLEV_CLASSES
+    order = ["low", "medium", "high", "emergency"]
+    seq = [HERLEV_RISK_FLOOR[c] for c in HERLEV_CLASSES if c in HERLEV_RISK_FLOOR]
+    ranks = [order.index(v) for v in seq]
+    assert ranks == sorted(ranks), f"风险下限非单调: {list(zip(HERLEV_CLASSES, seq))}"
+
+
+def test_every_abnormal_class_has_tier():
+    """每个异常类都必须有严重度分层，否则跨空间对齐会漏判。"""
+    from utils.label_mapping import (
+        SEVERITY_TIER, SIPAKMED_ABNORMAL_CLASSES, HERLEV_ABNORMAL_CLASSES,
+    )
+    missing = (SIPAKMED_ABNORMAL_CLASSES | HERLEV_ABNORMAL_CLASSES) - set(SEVERITY_TIER)
+    assert not missing, f"缺少分层定义: {missing}"
+
+
+def test_case_evidence_excludes_benign_from_abnormal_types():
+    """回归：二分类判异常但分型为 Metaplastic，不得出现在 abnormal_types 中。"""
+    from utils.case_evidence import aggregate_case_evidence
+    cv = {
+        "label_space": "sipakmed",
+        "multiclass_abnormal_classes": ["Dyskeratotic", "Koilocytotic"],
+        "cells": [
+            {"final_class": "Metaplastic", "final_confidence": 0.9,
+             "binary_result": {"class": "abnormal"}},
+            {"final_class": "Koilocytotic", "final_confidence": 0.8,
+             "binary_result": {"class": "abnormal"}},
+        ],
+    }
+    ev = aggregate_case_evidence(cv)
+    assert ev["abnormal_types"] == ["Koilocytotic"]      # Metaplastic 被排除
+    assert ev["abnormal_count"] == 2                      # 计数不剔除，避免低估
+    assert ev["conflict_count"] == 1
+    assert ev["review_required"] is True
+
+# --- dual 模式一致性校验 ---
+def test_dual_conflict_is_one_way():
+    """只有「主空间更轻」才算冲突；SIPaKMeD 天花板导致的差异不算。"""
+    from utils.label_mapping import dual_conflict_reason
+
+    # 一致
+    assert dual_conflict_reason("moderate_dysplastic", "Koilocytotic") is None   # high vs low
+    assert dual_conflict_reason("carcinoma_in_situ", "Dyskeratotic") is None     # high vs low
+    assert dual_conflict_reason("light_dysplastic", "Koilocytotic") is None      # low vs low
+    assert dual_conflict_reason("normal_superficial", "Parabasal") is None       # nil vs nil
+    assert dual_conflict_reason("normal_columnar", "Metaplastic") is None        # nil vs benign
+
+    # 主空间低估 → 冲突
+    assert dual_conflict_reason("normal_superficial", "Koilocytotic") is not None
+    assert dual_conflict_reason("normal_intermediate", "Dyskeratotic") is not None
+    assert dual_conflict_reason("normal_columnar", "Metaplastic") is None        # benign 差异不算
+    assert dual_conflict_reason("normal_columnar", "Dyskeratotic") is not None
+
+
+def test_dual_mode_primary_is_herlev():
+    """dual 模式主空间必须是 herlev（临床分级），不可静默变成 sipakmed。"""
+    import os
+    os.environ["MULTI_LABEL_SPACE"] = "dual"
+    try:
+        import importlib
+        import services.vision_service as vs
+        importlib.reload(vs)
+        assert vs.DUAL_MODE is True
+        assert vs.PRIMARY_SPACE == "herlev"
+        assert vs.AUX_SPACE == "sipakmed"
+    finally:
+        os.environ.pop("MULTI_LABEL_SPACE", None)
