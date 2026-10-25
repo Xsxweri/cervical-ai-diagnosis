@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentResponse, RiskLevel } from '../types';
-import { agentClarify, agentFollowUp, agentUpload, connectAgentWS } from '../libts/api';
+import type { AgentResponse, CellResult, RiskLevel } from '../types';
+import { agentClarify, agentFollowUp, agentUpload, connectAgentWS, fetchSession, fetchSessionImage } from '../libts/api';
 import { riskFromText } from '../libts/format';
 import { addHistory } from '../libts/storage';
 
@@ -31,6 +31,28 @@ export function useDiagnosis() {
   const [riskScope, setRiskScope] = useState<'cell' | 'case' | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [decisionReason, setDecisionReason] = useState<string | null>(null);
+  const [clarificationRounds, setClarificationRounds] = useState(0);
+  const [reviewRequired, setReviewRequired] = useState(false);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [reportAt, setReportAt] = useState<number | null>(null);
+  const [specimenUrl, setSpecimenUrl] = useState<string | null>(null);
+  const [cvCells, setCvCells] = useState<CellResult[]>([]);
+  const [cvMetrics, setCvMetrics] = useState<{
+    totalCells: number | null;
+    abnormalCells: number | null;
+    highestRisk: string | null;
+    maxUncertainty: number | null;
+    thresholds: { high: number; medium: number } | null;
+    aggregation: string | null;
+  }>({
+    totalCells: null,
+    abnormalCells: null,
+    highestRisk: null,
+    maxUncertainty: null,
+    thresholds: null,
+    aggregation: null,
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const filenameRef = useRef('病例');
@@ -58,12 +80,31 @@ export function useDiagnosis() {
     [pushMessage]
   );
 
-  const finishReport = useCallback(
-    (res: AgentResponse, filename: string) => {
+    const finishReport = useCallback(
+    (
+      res: AgentResponse,
+      filename: string,
+      opts: { record?: boolean; connect?: boolean } = {},
+    ) => {
+      const { record = true, connect = true } = opts;
       const text = res.report ?? '';
+
       setReport(text);
       setRecommendations(res.recommendations ?? []);
       setRiskScope(res.risk_scope ?? null);
+      setDecisionReason(res.decision_reason ?? null);
+      setClarificationRounds(res.clarification_rounds ?? 0);
+      setReviewRequired(res.review_required ?? false);
+      setConflictCount(res.grading_conflict_count ?? 0);
+      setCvMetrics({
+        totalCells: res.total_cells ?? null,
+        abnormalCells: res.abnormal_cells ?? null,
+        highestRisk: res.highest_risk ?? null,
+        maxUncertainty: res.max_uncertainty ?? null,
+        thresholds: res.uncertainty_thresholds ?? null,
+        aggregation: res.uncertainty_aggregation ?? null,
+      });
+      setCvCells(res.cells ?? []);
 
       // 无法判读（0 细胞等）：单独一步展示原因，绝不落到"低风险"，也不写历史
       if (res.status === 'unreadable' || res.error_message) {
@@ -79,21 +120,26 @@ export function useDiagnosis() {
         res.risk_level && res.risk_level !== 'pending' ? res.risk_level : null;
       const finalRisk = backRisk ?? riskFromText(text);
       setRiskLevel(finalRisk);
+      setReportAt(Date.now());
       setStep('report');
       pushMessage({ role: 'assistant', content: text, type: 'report' });
-      addHistory({
-        id: res.session_id,
-        timestamp: Date.now(),
-        filename,
-        mode: 'agent',
-        riskLevel: finalRisk,
-        riskScope: res.risk_scope ?? null,
-        sessionId: res.session_id,
-        reportPreview: text.slice(0, 200),
-      });
-      connectWS(res.session_id);
+
+      if (record) {
+        addHistory({
+          id: res.session_id,
+          timestamp: Date.now(),
+          filename,
+          mode: 'agent',
+          riskLevel: finalRisk,
+          riskScope: res.risk_scope ?? null,
+          reviewRequired: res.review_required ?? false,
+          sessionId: res.session_id,
+          reportPreview: text.slice(0, 200),
+        });
+      }
+      if (connect) connectWS(res.session_id);
     },
-    [connectWS, pushMessage]
+    [connectWS, pushMessage],
   );
 
   const start = useCallback(
@@ -104,6 +150,10 @@ export function useDiagnosis() {
       setErrorMessage(null);
       setRiskScope(null);
       setRecommendations([]);
+      setDecisionReason(null);
+      setClarificationRounds(0);
+      setReviewRequired(false);
+      setConflictCount(0);
       pushMessage({ role: 'system', content: `已上传图像：${file.name}` });
       const controller = new AbortController();
       abortRef.current = controller;
@@ -137,6 +187,46 @@ export function useDiagnosis() {
       }
     },
     [finishReport, pushMessage]
+  );
+
+  /** 从服务端会话恢复一次完整诊断（用于历史记录"打开报告 **/
+  const loadSession = useCallback(
+    async (sid: string) => {
+      setStep('analyzing');
+      setIsLoading(true);
+      setErrorMessage(null);
+      setSpecimenUrl(null);
+      try {
+        const res = await fetchSession(sid);
+        setSessionId(res.session_id);
+        // 恢复时不重复写历史、不自动连 WS（用户可能只想看报告）
+        finishReport(res, '已保存会话', { record: false, connect: false });
+
+        if (res.image_available) {
+          try {
+            const url = await fetchSessionImage(sid);
+            setSpecimenUrl(url);
+          } catch {
+            // 原图可能已被清理：报告仍可阅读，只是缺少证据图
+            setSpecimenUrl(null);
+          }
+        }
+      } catch (e) {
+        const status = (e as { response?: { status?: number } }).response?.status;
+        const reason =
+          status === 404
+            ? '该会话已过期（服务端仅保留 1 天）或已被清理，无法恢复完整报告。'
+            : status === 403
+            ? '无权访问该会话。'
+            : `读取会话失败：${e instanceof Error ? e.message : '未知错误'}`;
+        setErrorMessage(reason);
+        setStep('unreadable');
+        pushMessage({ role: 'system', content: reason });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [finishReport, pushMessage],
   );
 
   /** 取消正在进行的分析 */
@@ -176,6 +266,11 @@ export function useDiagnosis() {
     }
     setStep('chat');
   }, [sessionId, connectWS]);
+
+  /** 关闭追问抽屉，回到报告视图（报告内容不变） */
+  const closeChat = useCallback(() => {
+    setStep((s) => (s === 'chat' ? 'report' : s));
+  }, []);
 
   const sendMessage = useCallback(
     async (input: string) => {
@@ -217,6 +312,21 @@ export function useDiagnosis() {
     setSessionId(null);
     setQuestions([]);
     setReport('');
+    setDecisionReason(null);
+    setClarificationRounds(0);
+    setReviewRequired(false);
+    setConflictCount(0);
+    setReportAt(null);
+    setSpecimenUrl(null);
+    setCvCells([]);
+    setCvMetrics({
+      totalCells: null,
+      abnormalCells: null,
+      highestRisk: null,
+      maxUncertainty: null,
+      thresholds: null,
+      aggregation: null,
+    });
   }, []);
 
   useEffect(() => {
@@ -235,12 +345,23 @@ export function useDiagnosis() {
     riskScope,
     recommendations,
     errorMessage,
+    decisionReason,
+    clarificationRounds,
+    reviewRequired,
+    conflictCount,
+    sessionId,
+    reportAt,
     isLoading,
     isSending,
+    specimenUrl,
+    cvMetrics,
+    cvCells,
     start,
+    loadSession,
     cancel,
     submitClarification,
     startChat,
+    closeChat,
     sendMessage,
     reset,
   };

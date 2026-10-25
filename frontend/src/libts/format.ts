@@ -15,6 +15,13 @@ export const CLASS_LABELS: Record<string, string> = {
   Metaplastic: '化生细胞',
   Parabasal: '副基底层细胞',
   'Superficial-Intermediate': '浅层中间层细胞',
+  normal_superficial: '表层鳞状细胞',
+  normal_intermediate: '中层鳞状细胞',
+  normal_columnar: '颈管柱状细胞',
+  light_dysplastic: '轻度异型增生 (CIN1)',
+  moderate_dysplastic: '中度异型增生 (CIN2)',
+  severe_dysplastic: '重度异型增生 (CIN3)',
+  carcinoma_in_situ: '原位癌 (CIS)',
   none: '未检出细胞',
 };
 
