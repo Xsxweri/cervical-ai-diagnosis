@@ -37,7 +37,7 @@ npm run lint        # eslint .
 
 - 登录 token 保存在 `localStorage`（键名 `cervical-auth-token`），HTTP 请求走 `Authorization: Bearer`。
 - 401 响应会自动清除 token 并跳转 `/login`。
-- WebSocket 目前通过查询参数 `?token=` 传递凭证（后端握手不会回选 `Sec-WebSocket-Protocol` 子协议，发送子协议会导致握手失败）。
+- WebSocket 通过 `Sec-WebSocket-Protocol: bearer, <JWT>` 子协议传递凭证，不使用 `?token=`（避免凭证进入访问日志与浏览器历史）。后端必须回选 `bearer` 子协议，否则浏览器判定握手失败（1006）。
 - `localStorage` 可被 XSS 读取，生产环境建议配置 CSP，或改为 httpOnly Cookie 方案。
 
 ## 风险展示约定

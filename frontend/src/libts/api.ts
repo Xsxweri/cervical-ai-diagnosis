@@ -1,6 +1,6 @@
 import axios from 'axios';
-import type { AgentResponse, CVResult, FollowUpResponse, HealthResponse } from '../types';
-import {getToken, setToken, clearToken} from './storage';
+import type { AgentResponse, CVResult, FollowUpResponse, HealthResponse, SessionResponse, SystemInfoResponse, } from '../types';
+import { getToken, setToken, clearToken, setDoctor } from './storage';
 
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000';
@@ -36,15 +36,44 @@ export interface LoginResponse {
 
 /**医生登录并保存token */
 export async function login(username: string, password: string): Promise<LoginResponse> {
-    const { data } = await http.post<LoginResponse>('/api/auth/login', { username, password });
-    setToken(data.token);
-    return data;
+  const { data } = await http.post<LoginResponse>('/api/auth/login', { username, password });
+  setToken(data.token);
+  setDoctor(data.doctor ?? null);
+  return data;
 }
 
-/** 健康检查 */
+/** 存活探针（无鉴权） */
 export async function fetchHealth(): Promise<HealthResponse> {
   const { data } = await http.get<HealthResponse>('/health');
   return data;
+}
+
+/** 系统信息（需鉴权）：设备、模型路径、阈值、RAG 可用性 */
+export async function fetchSystemInfo(): Promise<SystemInfoResponse> {
+  const { data } = await http.get<SystemInfoResponse>('/api/system/info');
+  return data;
+}
+
+/** 读取会话的完整结果（Redis TTL 内有效，受会话归属校验） */
+export async function fetchSession(sessionId: string): Promise<SessionResponse> {
+  const { data } = await http.get<SessionResponse>(
+    `/api/agent/session/${encodeURIComponent(sessionId)}`,
+  );
+  return data;
+}
+
+/**
+ * 读取会话原图，返回 object URL。
+ *
+ * 用 blob 而非直接给 <img src>：鉴权走 Authorization 头，
+ * 若拼成 URL 传 token，会让凭证进入浏览器历史与服务端访问日志。
+ */
+export async function fetchSessionImage(sessionId: string): Promise<string> {
+  const { data } = await http.get<Blob>(
+    `/api/agent/session/${encodeURIComponent(sessionId)}/image`,
+    { responseType: 'blob' },
+  );
+  return URL.createObjectURL(data);
 }
 
 /** 单张图片快速分析 */
@@ -114,9 +143,8 @@ export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
    * token 查询参数；若后端改为 accept(subprotocol="bearer")，可切回
    * `new WebSocket(url, ['bearer', token])`。
    */
-  const base = `${WS_BASE}/ws/agent/chat/${encodeURIComponent(sessionId)}`;
-  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
-  const ws = new WebSocket(url);
+  const url = `${WS_BASE}/ws/agent/chat/${encodeURIComponent(sessionId)}`;
+  const ws = new WebSocket(url, token ? ['bearer', token] : ['bearer']);
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data) as { type: string; content?: string; message?: string };

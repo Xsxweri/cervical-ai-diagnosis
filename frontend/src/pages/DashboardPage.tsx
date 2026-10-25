@@ -1,172 +1,237 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Sparkles,
-  ScanSearch,
-  History,
-  Server,
-  Cpu,
-  Boxes,
-  Gauge,
-  ArrowRight,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { fetchHealth } from '../libts/api';
+import { AlertTriangle, ArrowUpRight, Info, ScanSearch } from 'lucide-react';
+import { fetchSystemInfo } from '../libts/api';
 import { getHistory } from '../libts/storage';
 import { formatTime } from '../libts/format';
-import type { HealthResponse } from '../types';
-import StatCard from '../components/ui/StatCard';
+import type { RiskLevel, SystemInfoResponse } from '../types';
 import RiskBadge from '../components/ui/RiskBadge';
 import RiskScopeTag from '../components/ui/RiskScopeTag';
-import Spinner from '../components/ui/Spinner';
 import EmptyState from '../components/ui/EmptyState';
 
-const QUICK_LINKS = [
-  { to: '/diagnose', label: '智能诊断', desc: 'AI-Agent 全流程辅助诊断', icon: Sparkles, tone: 'ai' as const },
-  { to: '/analyze', label: '快速分析', desc: '单张 / 批量 / ZIP 细胞分析', icon: ScanSearch, tone: 'primary' as const },
-  { to: '/history', label: '诊断历史', desc: '查看本地历史记录', icon: History, tone: 'gray' as const },
+type Filter = 'all' | 'high' | 'unreadable';
+
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'high', label: '高风险' },
+  { key: 'unreadable', label: '无法判读' },
 ];
 
+const HIGH: RiskLevel[] = ['high', 'emergency'];
+
+function isToday(ts: number): boolean {
+  const d = new Date(ts);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export default function DashboardPage() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [healthLoading, setHealthLoading] = useState(true);
-  const [healthError, setHealthError] = useState<string | null>(null);
-  const recent = getHistory().slice(0, 5);
+  const [health, setHealth] = useState<SystemInfoResponse | null>(null);
+  const [healthError, setHealthError] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
+  const records = useMemo(() => getHistory(), []);
 
   useEffect(() => {
     let cancelled = false;
-    fetchHealth()
+    fetchSystemInfo()
       .then((h) => {
         if (!cancelled) setHealth(h);
       })
       .catch(() => {
-        if (!cancelled) setHealthError('无法连接后端服务（localhost:8000）');
-      })
-      .finally(() => {
-        if (!cancelled) setHealthLoading(false);
+        if (!cancelled) setHealthError(true);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const today = records.filter((r) => isToday(r.timestamp));
+  const todayHigh = today.filter((r) => HIGH.includes(r.riskLevel)).length;
+  const todayUnreadable = today.filter((r) => r.riskLevel === 'unreadable').length;
+  const todayConflict = today.filter((r) => r.hasConflict).length;
+
+  const visible = records.filter((r) => {
+    if (filter === 'high') return HIGH.includes(r.riskLevel);
+    if (filter === 'unreadable') return r.riskLevel === 'unreadable';
+    return true;
+  });
+
   return (
     <div className="space-y-6">
-      {/* 欢迎横幅 */}
-      <div className="rounded-2xl bg-gradient-to-r from-primary-700 via-primary-600 to-primary-500 text-white p-6 sm:p-8 animate-fade-in">
-        <h2 className="text-xl sm:text-2xl font-bold">欢迎使用 AI-Agent 宫颈病理诊断系统</h2>
-        <p className="mt-2 text-primary-100 text-sm sm:text-base max-w-2xl">
-          基于 YOLOv8 细胞检测、ResNet50 双级分类与 LangGraph 智能体工作流，
-          提供从图像上传、自动诊断到医生追问的完整闭环。
-        </p>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <Link to="/diagnose" className="btn bg-white text-primary-700 hover:bg-primary-50">
-            <Sparkles size={16} /> 开始智能诊断
-          </Link>
-          <Link to="/analyze" className="btn bg-primary-800/40 text-white hover:bg-primary-800/60 border border-white/20">
-            <ScanSearch size={16} /> 快速分析
-          </Link>
+      {/* 标题行 */}
+      <div className="flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="title-serif text-[26px] leading-tight">今日判读</h2>
+          <p className="mt-1.5 text-[13px] text-muted">
+            {today.length > 0 ? (
+              <>
+                今日新增 {today.length} 例
+                {todayHigh > 0 && <> · 高风险 {todayHigh}</>}
+                {todayUnreadable > 0 && <> · 无法判读 {todayUnreadable}</>}
+                {todayConflict > 0 && <> · 证据冲突 {todayConflict}</>}
+              </>
+            ) : (
+              '今天还没有判读记录。'
+            )}
+          </p>
         </div>
+        <Link to="/diagnose" className="btn-primary">
+          <ScanSearch size={16} /> 开始判读
+        </Link>
       </div>
 
-      {/* 快捷入口 */}
-      <div className="grid sm:grid-cols-3 gap-4">
-        {QUICK_LINKS.map(({ to, label, desc, icon, tone }) => (
-          <Link key={to} to={to} className="card card-hover p-5 group">
-            <div className="flex items-start justify-between">
-              <StatCardStandalone icon={icon} label={label} desc={desc} tone={tone} />
-              <ArrowRight size={18} className="text-gray-300 group-hover:text-primary-500 transition-colors" />
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      {/* 系统状态 + 最近诊断 */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="card p-6 lg:col-span-2">
-          <div className="flex items-center gap-2 mb-4">
-            <Server size={18} className="text-primary-600" />
-            <h3 className="font-semibold text-gray-900">系统状态</h3>
+      {/* 病例表 */}
+      <section className="card">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-hairline flex-wrap">
+          <h3 className="text-[14px] font-medium text-ink">最近病例</h3>
+          <div className="flex items-center gap-1">
+            {FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                aria-pressed={filter === key}
+                className={`px-2.5 py-1 rounded-md text-[12.5px] transition-colors ${
+                  filter === key
+                    ? 'bg-primary-50 text-hematoxylin font-medium'
+                    : 'text-muted hover:text-ink hover:bg-glass'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-
-          {healthLoading && <Spinner label="正在获取系统状态..." />}
-
-          {healthError && !healthLoading && (
-            <EmptyState
-              icon={Server}
-              title="后端服务未连接"
-              description={healthError}
-              action={<Link to="/diagnose" className="btn-primary">前往诊断页重试</Link>}
-            />
-          )}
-
-          {health && !healthLoading && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <StatCard icon={Cpu} label="运行设备" value={health.device} tone="primary" />
-                <StatCard icon={Gauge} label="MC Dropout 采样" value={health.config.mc_dropout_samples} sub="次" tone="ai" />
-                <StatCard icon={Boxes} label="模型状态" value="已加载" tone="success" />
-              </div>
-              <div className="rounded-lg bg-gray-50 p-4 text-xs space-y-1.5 text-gray-600">
-                <p><span className="text-gray-400">检测模型：</span>{health.models.yolo}</p>
-                <p><span className="text-gray-400">二分类：</span>{health.models.二分类}</p>
-                <p><span className="text-gray-400">多分类：</span>{health.models.多分类}</p>
-                <p>
-                  <span className="text-gray-400">阈值：</span>
-                  不确定性 中 {health.config.不确定阈值_medium} / 高 {health.config.不确定阈值_high}
-                  {' · '}异常 CONF {health.config.异常的CONF阈值}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
 
-        <div className="card p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <History size={18} className="text-primary-600" />
-            <h3 className="font-semibold text-gray-900">最近诊断</h3>
-          </div>
-          {recent.length === 0 ? (
-            <EmptyState icon={History} title="暂无诊断记录" description="完成一次智能诊断或快速分析后，记录会出现在这里" />
-          ) : (
-            <ul className="space-y-3">
-              {recent.map((r) => (
-                <li key={r.id} className="flex items-center justify-between gap-2 text-sm">
-                  <div className="min-w-0">
-                    <p className="truncate text-gray-800 font-medium">{r.filename}</p>
-                    <p className="text-xs text-gray-400">
-                      {formatTime(r.timestamp)} · {r.mode === 'agent' ? '智能诊断' : '快速分析'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <RiskScopeTag scope={r.riskScope} level={r.riskLevel} />
-                    <RiskBadge level={r.riskLevel} />
-                  </div>
-                </li>
+        {visible.length === 0 ? (
+          <EmptyState
+            icon={ScanSearch}
+            title={records.length === 0 ? '今天还没有判读记录' : '当前筛选下没有病例'}
+            description={
+              records.length === 0
+                ? '上传一张细胞学图像开始。'
+                : '换一个筛选条件试试。'
+            }
+            action={
+              records.length === 0 ? (
+                <Link to="/diagnose" className="btn-primary">
+                  开始判读
+                </Link>
+              ) : undefined
+            }
+          />
+        ) : (
+          <table className="table-base">
+            <caption className="sr-only">最近判读病例，按风险等级与时间排序</caption>
+            <thead>
+              <tr>
+                <th scope="col">文件</th>
+                <th scope="col">时间</th>
+                <th scope="col" className="text-right">细胞</th>
+                <th scope="col" className="text-right">异常</th>
+                <th scope="col">风险 / 口径</th>
+                <th scope="col" className="text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.id}>
+                  <td className="max-w-[220px]">
+                    <span className="block truncate text-ink">{r.filename}</span>
+                    <span className="text-[11.5px] text-muted">
+                      {r.mode === 'agent' ? '智能诊断' : '快速分析'}
+                    </span>
+                  </td>
+                  <td className="text-muted tabular whitespace-nowrap">
+                    {formatTime(r.timestamp)}
+                  </td>
+                  <td className="text-right tabular">{r.totalCells ?? '—'}</td>
+                  <td className="text-right tabular">
+                    {r.abnormalCells ?? '—'}
+                  </td>
+                  <td>
+                    <span className="flex items-center gap-1.5 flex-wrap">
+                      <RiskBadge level={r.riskLevel} />
+                      <RiskScopeTag scope={r.riskScope} level={r.riskLevel} />
+                      {r.hasConflict && (
+                        <span
+                          className="badge bg-risk-mediumBg text-risk-mediumInk"
+                          title="异常细胞分型不止一种，建议复核"
+                        >
+                          证据冲突
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="text-right">
+                    <Link
+                      to="/history"
+                      className="inline-flex items-center gap-0.5 text-[12.5px] text-hematoxylin hover:underline"
+                    >
+                      查看
+                      <ArrowUpRight size={13} />
+                    </Link>
+                  </td>
+                </tr>
               ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+            </tbody>
+          </table>
+        )}
+      </section>
 
-/* 内联小卡片（避免过度抽象） */
-function StatCardStandalone({ icon: Icon, label, desc, tone }: { icon: LucideIcon; label: string; desc: string; tone: 'ai' | 'primary' | 'gray'; }) {
-  const map: Record<string, string> = {
-    ai: 'bg-ai-50 text-ai-600',
-    primary: 'bg-primary-50 text-primary-600',
-    gray: 'bg-gray-100 text-gray-500',
-  };
-  return (
-    <div className="flex items-start gap-3">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${map[tone] ?? map.gray}`}>
-        <Icon size={20} />
-      </div>
-      <div>
-        <p className="font-semibold text-gray-900">{label}</p>
-        <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+      {/* 状态带 */}
+      <div className="flex items-center gap-3 px-1 text-[12px] text-muted flex-wrap">
+        {healthError ? (
+          <span className="inline-flex items-center gap-1 text-risk-highInk">
+            <AlertTriangle size={14} /> 无法连接判读服务
+          </span>
+        ) : health ? (
+          <span className="tabular">
+            模型已加载 · {health.device}
+            {!health.rag_available && ' · 知识库不可用（本次报告无文献依据）'}
+          </span>
+        ) : (
+          <span>正在获取系统状态…</span>
+        )}
+
+        {health && (
+          <details className="ml-auto">
+            <summary className="cursor-pointer list-none inline-flex items-center gap-1 hover:text-ink">
+              <Info size={13} /> 系统信息
+            </summary>
+            <dl className="mt-2 rounded-md border border-hairline bg-white p-3 space-y-1 tabular">
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">检测模型</dt>
+                <dd className="truncate">{health.models.yolo}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">二分类</dt>
+                <dd className="truncate">{health.models.二分类}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">多分类</dt>
+                <dd className="truncate">{health.models.多分类}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">不确定性阈值</dt>
+                <dd>
+                  中 {health.config.不确定阈值_medium} / 高 {health.config.不确定阈值_high}
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">异常 CONF</dt>
+                <dd>{health.config.异常的CONF阈值}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="text-muted w-24 shrink-0">不确定性采样</dt>
+                <dd>MC Dropout × {health.config.mc_dropout_samples}</dd>
+              </div>
+            </dl>
+          </details>
+        )}
       </div>
     </div>
   );

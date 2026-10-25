@@ -4,6 +4,39 @@ const KEY = 'cervical-diagnosis-history';
 const TOKEN_KEY = 'cervical-auth-token';
 const MAX = 50;
 
+const DOCTOR_KEY = 'cervical-doctor-profile';
+
+export interface DoctorProfile {
+  name?: string;
+  department?: string;
+  hospital?: string;
+}
+
+export function getDoctor(): DoctorProfile | null {
+  try {
+    const raw = localStorage.getItem(DOCTOR_KEY);
+    return raw ? (JSON.parse(raw) as DoctorProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setDoctor(doctor: DoctorProfile | null): void {
+  try {
+    if (doctor) localStorage.setItem(DOCTOR_KEY, JSON.stringify(doctor));
+  } catch {
+    /* noop */
+  }
+}
+
+export function clearDoctor(): void {
+  try {
+    localStorage.removeItem(DOCTOR_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
 export function getToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -12,7 +45,7 @@ export function getToken(): string | null {
   }
 }
 
-export function setToken(token: string | null): void {
+export function setToken(token: string): void {
   try {
     localStorage.setItem(TOKEN_KEY, token);
   } catch {

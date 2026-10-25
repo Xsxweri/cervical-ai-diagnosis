@@ -4,43 +4,64 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 品牌主色（医疗蓝，取自 Tailwind sky 色板）
+        // 品牌主色：苏木精蓝整条色阶（原天蓝已替换）
         primary: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          200: '#bae6fd',
-          300: '#7dd3fc',
-          400: '#38bdf8',
-          500: '#0ea5e9',
-          600: '#0284c7',
-          700: '#0369a1',
-          800: '#075985',
-          900: '#0c4a6e',
+          50: '#F4F6FA',
+          100: '#E7EBF3',
+          200: '#CBD3E4',
+          300: '#A8B4CE',
+          400: '#7A8BB0',
+          500: '#54668F',
+          600: '#2E3B63',
+          700: '#263152',
+          800: '#1E2741',
+          900: '#161E33',
         },
-        // 语义色：正常 / 警告 / 异常 / AI
+        // 语义色：正常 / 警告 / 异常（保持原有键，避免全站改类名）
         success: {
-          50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0',
-          500: '#10b981', 600: '#059669', 700: '#047857',
+          50: '#EDF2EE', 100: '#E3EAE5', 200: '#C7D6CC',
+          500: '#6E8F79', 600: '#4F7A63', 700: '#3C5D4B',
         },
         warning: {
-          50: '#fffbeb', 100: '#fef3c7', 200: '#fde68a',
-          500: '#f59e0b', 600: '#d97706', 700: '#b45309',
+          50: '#F6F0E2', 100: '#F1E7D2', 200: '#E4D3B2',
+          500: '#B39356', 600: '#9A7B3F', 700: '#6E5527',
+          800: '#55411E',
         },
         danger: {
-          50: '#fff1f2', 100: '#ffe4e6', 200: '#fecdd3',
-          500: '#f43f5e', 600: '#e11d48', 700: '#be123c',
+          50: '#F8EBE7', 100: '#F4DED8', 200: '#E8C2B7',
+          500: '#C4705A', 600: '#B0563F', 700: '#8A4230',
         },
+        // 原"AI 紫"退出舞台，映射为中性灰（保留键名，避免改动 8 处引用）
         ai: {
-          50: '#faf5ff', 100: '#f3e8ff', 200: '#e9d5ff',
-          500: '#a855f7', 600: '#9333ea', 700: '#7e22ce',
+          50: '#F2F5F3', 100: '#E8ECEA', 200: '#D2D9D6',
+          500: '#8A9391', 600: '#667076', 700: '#4E565A',
         },
-        // ---- 登录页"对焦"设计令牌（取自 H&E 染色语汇）----
-        glass: '#F2F5F3',       // 页面底色、图像边缘
-        ink: '#12171A',         // 主文字
-        hematoxylin: '#2E3B63', // 品牌、主按钮、焦点环
-        eosin: '#A64F52',       // 错误、登记点（仅小面积）
-        muted: '#667076',       // 说明文字、辅助信息
-        hairline: '#DCE2DF',    // 输入框、分隔线
+
+        // ---- H&E 设计令牌 ----
+        glass: '#F2F5F3',
+        ink: '#12171A',
+        hematoxylin: '#2E3B63',
+        eosin: '#A64F52',
+        muted: '#667076',
+        hairline: '#DCE2DF',
+
+        // ---- 低饱和风险色：底色 / 文字（两档分开，保证对比度）----
+        risk: {
+          low: '#4F7A63',
+          lowInk: '#3C5D4B',
+          lowBg: '#EDF2EE',
+          medium: '#9A7B3F',
+          mediumInk: '#6E5527',
+          mediumBg: '#F6F0E2',
+          high: '#B0563F',
+          highInk: '#8A4230',
+          highBg: '#F8EBE7',
+          emergency: '#8E2F35',
+          emergencyBg: '#F6E7E8',
+          unreadable: '#6B7478',
+          unreadableInk: '#565E62',
+          unreadableBg: '#EFF1F2',
+        },
       },
       fontFamily: {
         sans: [
@@ -55,8 +76,7 @@ export default {
         ],
       },
       boxShadow: {
-        card: '0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05)',
-        'card-hover': '0 12px 28px -8px rgb(2 132 199 / 0.15), 0 4px 12px -4px rgb(0 0 0 / 0.06)',
+        panel: '0 12px 32px -12px rgb(18 23 26 / 0.18), 0 2px 8px -4px rgb(18 23 26 / 0.08)',
       },
       keyframes: {
         'fade-in': {
@@ -83,6 +103,10 @@ export default {
           '0%': { transform: 'translateX(-110%)' },
           '100%': { transform: 'translateX(340%)' },
         },
+        'drawer-in': {
+          '0%': { transform: 'translateX(16px)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out',
@@ -90,6 +114,7 @@ export default {
         'focus-in': 'focus-in 800ms cubic-bezier(.2,.8,.2,1) both',
         'ring-in': 'ring-in 800ms cubic-bezier(.2,.8,.2,1) both',
         'progress-line': 'progress-line 1.1s cubic-bezier(.4,0,.6,1) infinite',
+        'drawer-in': 'drawer-in 180ms cubic-bezier(.2,.8,.2,1) both',
       },
     },
   },
