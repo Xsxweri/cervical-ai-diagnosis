@@ -82,7 +82,7 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         llm = get_llm()
         chain = explain_prompt | llm
         response = await chain.ainvoke({"context": explain_context})
-        full_report = (state.get("diagnosis_report") or "") + "\n\n---\n\n【AI诊断逻辑解释】\n" + response.content
+        full_report = (state.get("diagnosis_report") or "") + "\n\n## 判读逻辑解释\n\n" + response.content
     except Exception as e:
         print(f"LLM生成可解释性报告失败: {e}")
         full_report = state.get("diagnosis_report") or ""

@@ -7,15 +7,26 @@ from datetime import datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
-from fastapi import WebSocket
+from fastapi import Request, WebSocket
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from Agents.conversation import ConversationManager
 from api.config import SERVICE_LOCATION
 
+TRUST_PROXY = os.getenv("TRUST_PROXY", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+def _client_key(request: Request) -> str:
+    """限流键：代理后可取真实客户端 IP，否则用 TCP 对端地址。"""
+    if TRUST_PROXY:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            # 取最左侧（最初发起方）；若代理链不可信，应改为取右起第 N 段
+            return xff.split(",")[0].strip()
+    return get_remote_address(request)
+
 # 限流器：按客户端 IP 计数
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=_client_key)
 
 
 class ConnectionManager:

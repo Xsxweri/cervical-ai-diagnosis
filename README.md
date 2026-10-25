@@ -176,19 +176,25 @@ python appWeb/app.py
 
 ## 🔌 API 接口
 
-所有 `/api/*` 与 `/analyze*` 接口均需 `Authorization: Bearer <JWT>` 头；WebSocket 通过`Sec-WebSocket-Protocol: bearer, <JWT>` 子协议头传递（不再使用 `?token=`）。
+所有 `/api/*` 与 `/analyze*` 接口均需 `Authorization: Bearer <JWT>` 头；WebSocket 通过 `Sec-WebSocket-Protocol: bearer, <JWT>` 子协议头传递（不使用 `?token=`，避免凭证进入访问日志）。
 
 | 方法 | 路径 | 说明 | 限流 |
 | --- | --- | --- | --- |
 | POST | `/api/auth/login` | 医生登录，返回 JWT | - |
 | POST | `/api/agent/upload` | 上传单张图片并启动完整诊断流程 | 10/min |
+| GET | `/api/agent/session/{session_id}` | 读取会话完整结果（报告 + 细胞明细，Redis TTL 内有效） | 30/min |
+| GET | `/api/agent/session/{session_id}/image` | 读取会话原图（证据链核对，Blob 方式） | - |
 | POST | `/api/agent/clarify/{session_id}` | 回答澄清问题，恢复中断的诊断 | 20/min |
 | POST | `/api/agent/followup` | 诊断完成后的自由追问 | 20/min |
 | WS | `/ws/agent/chat/{session_id}` | 追问对话的流式 WebSocket 通道 | - |
 | POST | `/analyze` | 单张图片双模型分析 | 10/min |
 | POST | `/analyze_batch` | 多张图片批量分析（≤10 张） | 5/min |
 | POST | `/analyze_zip` | ZIP 压缩包批量分析（≤20 张） | 3/min |
-| GET | `/health` | 健康检查（设备、模型、阈值配置） | - |
+| GET | `/health` | 存活探针（仅返回 `status`，无需鉴权） | - |
+| GET | `/api/system/info` | 系统信息（设备、模型路径、阈值、RAG 可用性） | - |
+
+> `/api/agent/session/*` 的数据源是 Redis 会话，默认保留 **1 天**；过期后返回 404。
+> 需要长期留存的报告请在前端「打印 / 存为 PDF」归档，或对接数据库存储。
 
 ### `/analyze*` 与 Agent 诊断的能力边界
 

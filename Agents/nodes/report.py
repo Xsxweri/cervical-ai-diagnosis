@@ -127,10 +127,10 @@ def skip_explainable_agent(state: DiagnosisState) -> Dict[str, Any]:
     ev = aggregate_case_evidence(state.get("cv_result") or {})
     dist = ev.get("class_distribution") or {}
     summary = (
-        "\n\n---\n\n【结构化摘要(未调用 LLM)】\n"
+        "\n\n## 结构化摘要\n\n"
         f"- 检出细胞 {ev.get('total', 0)} 个，异常 {ev.get('abnormal_count', 0)} 个\n"
         f"- 分类分布：{'、'.join(f'{k}:{v}' for k, v in sorted(dist.items())) or '无'}\n"
-        f"- 不确定性(P90 归一化熵)：{(state.get('max_uncertainty') or 0.0):.3f}\n"
+        f"- 不确定性(P90 归一化熵): {(state.get('max_uncertainty') or 0.0):.3f}\n"
         f"- 风险等级：{state.get('risk_level')}(口径 {state.get('risk_scope')})"
     )
     return {

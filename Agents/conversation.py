@@ -212,8 +212,10 @@ class ConversationManager:
         await self._save_session(session_id, state)
         return response.content
 
-    async def get_session_state(self, session_id: str) -> Optional[dict]:
+    async def get_session_state(self, session_id: str, requester_id: Optional[str] = None) -> Optional[dict]:
         """获取会话当前状态（用于前端同步）"""
+        if requester_id is not None:
+            await self._assert_owner(session_id, requester_id)
         return await self._load_session(session_id)
 
     async def clear_session(self, session_id: str) -> bool:
