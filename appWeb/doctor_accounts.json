@@ -2,7 +2,7 @@
   {
     "id": 1,
     "username": "dr_zhang",
-    "password_hash": "scrypt:32768:8:1$3lKq2k6uMU4AUw8T$03e894f7a5631bcb3786247993887e1a662e2e4d90524b8427a1a361f0dead32855fb64d1526617d08effceebaa0b3a95b2fdfad976ce4b52cd5a82278275448",
+    "password_hash": "scrypt:32768:8:1$dG07QJXnGDIGfIra$dac7d1decf0107d7ad6e83c3f750d04cc9676f634930d25bb3f504730ae1b0a3b9b31354e7afe68564b8b2f0f1279caa12a1c9444a16e5437380e33300b40486",
     "name": "示例医生A",
     "department": "妇科",
     "hospital": "示例医院甲"
