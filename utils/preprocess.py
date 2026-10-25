@@ -1,8 +1,6 @@
 import os
-import cv2
-import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision import transforms
 from PIL import Image
 import yaml
@@ -11,8 +9,6 @@ import logging
 from utils.label_mapping import (
     BINARY_CLASSES,
     BINARY_CLASS_MAPPING,
-    MULTICLASS_CLASSES,
-    MULTICLASS_CLASS_TO_IDX,
     SIPAKMED_DIR_MAPPING,
     DEFAULT_LABEL_SPACE,
     get_multiclass_classes,

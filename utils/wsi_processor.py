@@ -24,7 +24,6 @@ import numpy as np
 import cv2
 from typing import List, Tuple, Dict
 import torch
-from PIL import Image
 
 
 class WSIProcessor:

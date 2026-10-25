@@ -4,7 +4,6 @@ YOLO宫颈细胞检测格式数据处理器
 """
 
 import os
-import json
 from typing import List, Dict, Tuple
 import numpy as np
 import cv2

@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
 
 
 class CellAnalyzer:
@@ -186,7 +185,6 @@ def analyze_cell_morphology(image):
 
     # 如果输入是PIL Image，转换为OpenCV格式
     if hasattr(image, 'convert'):
-        from PIL import Image
         image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
     try:

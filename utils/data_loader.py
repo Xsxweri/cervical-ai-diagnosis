@@ -2,8 +2,7 @@ import os
 import random
 from collections import defaultdict
 
-import torch
-from torch.utils.data import DataLoader, ConcatDataset, Subset
+from torch.utils.data import DataLoader, Subset
 
 def case_key(image_path: str) -> str:
     """提取"病例/视野"标识，用于分组划分。
