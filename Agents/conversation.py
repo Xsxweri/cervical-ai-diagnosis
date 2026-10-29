@@ -6,7 +6,9 @@
 - 追问 Prompt 拼装     -> Agents.followup_prompt
 """
 
+import asyncio
 import logging
+import os
 import uuid
 from datetime import timedelta
 from typing import Optional
@@ -31,6 +33,7 @@ from Agents.session_store import (
 from Agents.state import DiagnosisState
 from Prompts.clinical_content import FOLLOWUP_FALLBACK
 from core.redis_client import get_redis_client
+import repos.report_repo as report_repo
 from services.vision_service import analyze_image_from_path  # 导入CV服务
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,7 @@ class ConversationManager:
 
     def __init__(self):
         self.session_ttl = timedelta(days=1)  # 会话过期时间
+        self._gradcam_locks: dict[str, asyncio.Lock] = {} # 按会话串行化 Grad-CAM 生成；进程内锁，多 worker 下退化为"可能多算一次"
 
     @property
     def _ttl_seconds(self) -> int:
@@ -72,8 +76,26 @@ class ConversationManager:
         await save_owner(get_redis_client, session_id, owner_id, self._ttl_seconds)
 
     async def _assert_owner(self, session_id: str, requester_id: Optional[str]):
-        """校验会话归属，失败抛 PermissionError（fail-closed）。"""
-        await assert_owner(get_redis_client, session_id, requester_id)
+        """验证会话归属"""
+        await assert_owner(get_redis_client, session_id, requester_id, fallback=report_repo.get_operator_id)
+
+    async def _perform_report(self, session_id: str, state: dict, operator_id: Optional[str]) -> None:
+        """
+        落库报告,把已完成的诊断写入 PostgreSQL
+        """
+        if not operator_id:
+            # 无归属的报告写入后无法做越权校验，也说明调用方漏传了身份
+            logger.warning(f"会话 [{session_id}] 缺少 operator_id，跳过落库")
+            return
+        try:
+            await report_repo.persist(session_id, state, operator_id)
+            logger.info(f"会话 [{session_id}] 报告已归档")
+        except Exception as e:
+            logger.error(
+                f"会话 [{session_id}] 报告归档失败(Redis 中仍有副本, TTL 内可读): {e}",
+                exc_info=True,
+            )
+            raise
 
     @staticmethod
     def _apply_interrupt(state: dict) -> dict:
@@ -128,6 +150,9 @@ class ConversationManager:
             )
             await self._save_session(session_id, final_state)
             await self._save_owner(session_id, owner_id)
+
+            if final_state.get("is_complete"):  # 诊断完成
+                await self._perform_report(session_id, final_state, owner_id)
             logger.info(f"会话 [{session_id}] 初始诊断完成，风险等级: {final_state.get('risk_level')}")
             return final_state
         except Exception as e:
@@ -160,6 +185,9 @@ class ConversationManager:
                 await get_graph().ainvoke(Command(resume=user_input), config)
             )
             await self._save_session(session_id, result)
+
+            if result.get("is_complete"):  # 诊断完成
+                await self._perform_report(session_id, result, requester_id)
             logger.info(f"会话 [{session_id}] 澄清处理完成，新动作: {result.get('action')}")
             return result
         except Exception as e:
@@ -213,10 +241,92 @@ class ConversationManager:
         return response.content
 
     async def get_session_state(self, session_id: str, requester_id: Optional[str] = None) -> Optional[dict]:
-        """获取会话当前状态（用于前端同步）"""
+        """获取会话当前状态"""
         if requester_id is not None:
             await self._assert_owner(session_id, requester_id)
-        return await self._load_session(session_id)
+
+        state = await self._load_session(session_id)
+        if state:
+            return state
+
+        state = await report_repo.load(session_id)
+        if state:
+            logger.info(f"会话 [{session_id}] 从 PostgreSQL 恢复")
+            try:
+                await self._save_session(session_id, state)
+            except Exception as e:
+                logger.warning(f"会话 [{session_id}] 回填 Redis 失败: {e}")
+        return state
+
+    async def generate_gradcam(
+        self,
+        session_id: str,
+        requester_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        按需为会话生成 Grad-CAM，返回叠加图路径；无法生成返回 None。
+
+        逻辑：
+        1. 校验会话确实处于完成状态
+        2. 确保锁（避免重复生成）
+        3. 确保已生成过（避免重复生成）
+        4. 确保可生成（可解释的判读结果）
+        5. 生成并保存
+        """
+        await self._assert_owner(session_id, requester_id)
+
+        state = await self._load_session(session_id)
+        if not state:
+            raise ValueError(f"会话 [{session_id}] 不存在或已过期")
+
+        # 已有产物：直接复用（loadSession 走 GET 时也会命中这条）
+        cached = state.get("gradcam_path")
+        if cached and os.path.isfile(cached):
+            return cached
+
+        if not state.get("is_complete"):
+            raise ValueError("诊断流程尚未完成，无法生成 Grad-CAM")
+
+        # 不可判读的病例没有可解释的判读结论
+        if state.get("risk_level") == "unreadable" or not state.get("cv_result"):
+            return None
+
+        lock = self._gradcam_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            # 双检：等锁期间可能已被另一请求生成
+            state = await self._load_session(session_id)
+            if not state:
+                return None
+            cached = state.get("gradcam_path")
+            if cached and os.path.isfile(cached):
+                return cached
+
+            from services.explainability_service import compute_case_gradcam
+
+            # CPU/GPU 密集：必须放线程，否则阻塞事件循环
+            result = await asyncio.to_thread(
+                compute_case_gradcam,
+                state.get("image_path"),
+                state.get("cv_result"),
+            )
+            if not result or not result.get("overlay_path"):
+                return None
+
+            path = result["overlay_path"]
+            state["gradcam_path"] = path
+            state["gradcam_analysis"] = result.get("attention_analysis")
+            await self._save_session(session_id, state)
+            try:
+                await report_repo.update_gradcam(session_id, path)
+            except Exception as e:
+                logger.warning(f"会话 [{session_id}] Grad-CAM 路径回写 PG 失败: {e}")
+            logger.info(f"会话 [{session_id}] Grad-CAM 已生成: {path}")
+
+            # 字典会随会话累积，超过阈值时清理已释放的锁
+            if len(self._gradcam_locks) > 256:
+                for sid in [s for s, lk in self._gradcam_locks.items() if not lk.locked()]:
+                    self._gradcam_locks.pop(sid, None)
+            return path
 
     async def clear_session(self, session_id: str) -> bool:
         """清除会话"""

@@ -6,6 +6,7 @@
 import math
 import os
 
+import core.env  # noqa: F401  导入期即读取阈值，必须先加载 .env
 import numpy as np
 
 # ---------------------------------------------------------------------------

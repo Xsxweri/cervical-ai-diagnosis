@@ -10,6 +10,7 @@ from PIL import Image
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+import core.env  # noqa: F401  必须在下面任何读 os.getenv 的导入之前
 
 # 第三方/项目模块
 from ultralytics import YOLO
@@ -80,7 +81,13 @@ MULTI_WEIGHTS = (
     else (os.getenv("MULTI_WEIGHTS") or MULTICLASS_WEIGHTS_BY_SPACE[PRIMARY_SPACE])
 )
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# 设备可显式指定：queue模式下API进程设VISION_DEVICE=cpu, 让GPU只被worker独占
+_DEVICE_OVERRIDE = os.getenv("VISION_DEVICE", "").strip().lower()
+if _DEVICE_OVERRIDE in {"cuda", "cpu"}:
+    DEVICE = torch.device(_DEVICE_OVERRIDE)
+else:
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 MC_DROPOUT_SAMPLES = int(os.getenv("MC_DROPOUT_SAMPLES", "10"))
 ABNORMAL_CONF_THRESHOLD = float(os.getenv("ABNORMAL_CONF_THRESHOLD", "0.5"))
 
@@ -411,6 +418,8 @@ def _analyze_pil_image_sync(
         "label_space": MULTI_LABEL_SPACE,
         "multiclass_abnormal_classes": sorted(abnormal_classes_for(MULTI_LABEL_SPACE)),
         "grading_conflict_count": 0,
+        "dual_conflict_count": 0,
+        "conflict_count": 0,
         "review_required": False,
         "dual_mode": DUAL_MODE,
         "primary_label_space": PRIMARY_SPACE,
@@ -581,9 +590,20 @@ def _analyze_pil_image_sync(
         coarse_risk = max_risk(coarse_risk, *[f for f in floors if f])
 
         # 结论冲突：抬到高不确定区间，让 Agent 走"追问 → 检索 → 证据不足"路径
-        conflict_count = sum(1 for c in cells if c.get("grading_conflict") or c.get("dual_conflict"))
+        grading_conflict_count = sum(1 for c in cells if c.get("grading_conflict"))
+        dual_conflict_count = sum(1 for c in cells if c.get("dual_conflict"))
+        conflict_count = sum(
+            1 for c in cells if c.get("grading_conflict") or c.get("dual_conflict")
+        )
         if conflict_count:
             image_uncertainty = max(image_uncertainty, UNCERTAINTY_HIGH + 0.01)
+            logger.warning(
+                "[conflict] grading=%d dual=%d total=%d | cells=%d abnormal=%d "
+                "primary=%s aux=%s",
+                grading_conflict_count, dual_conflict_count, conflict_count,
+                total_cells, abnormal_cells,
+                mgr.multi_label_space, mgr.aux_label_space,
+            )
 
         return {
             "total_cells": total_cells,
@@ -599,7 +619,9 @@ def _analyze_pil_image_sync(
             "max_uncertainty": round(image_uncertainty, 4),
             "label_space": mgr.multi_label_space,
             "multiclass_abnormal_classes": sorted(mgr.multi_abnormal_classes),
-            "grading_conflict_count": conflict_count,
+            "grading_conflict_count": grading_conflict_count,   # 仅「分级模型判非异常」
+            "dual_conflict_count": dual_conflict_count,         # 仅「双空间严重度不一致」
+            "conflict_count": conflict_count,                   # 并集（保留给聚合层）
             "review_required": conflict_count > 0,
             "dual_mode": DUAL_MODE,
             "primary_label_space": mgr.multi_label_space,

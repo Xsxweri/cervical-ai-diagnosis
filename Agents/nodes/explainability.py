@@ -49,7 +49,9 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         for doc in knowledge[:3]:
             explain_context += f'    - {(doc.get("content", "") or "")[:150]}...\n'
 
-    # 可选：Grad-CAM 注意力可解释性（ENABLE_GRADCAM=true 时生成）
+    # Grad-CAM 两种触发方式：
+    #   ENABLE_GRADCAM=true      报告生成时同步产出，并把注意力描述注入 LLM（成本高）
+    #   ENABLE_GRADCAM=false     不参与报告，改由 POST /gradcam 按需生成
     gradcam_path = None
     if grad_cam_enabled():
         gradcam = await asyncio.to_thread(

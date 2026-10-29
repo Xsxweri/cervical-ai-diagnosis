@@ -77,10 +77,10 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         ("human", "{context}\n\n请生成面向医生的辅助诊断报告。")
     ])
 
-    llm = get_llm()
-    chain = report_prompt | llm
-
+    
     try:
+        llm = get_llm()
+        chain = report_prompt | llm
         response = await chain.ainvoke({"context": context})
 
         # 生成建议

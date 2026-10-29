@@ -20,7 +20,11 @@ class MedicalKnowledgeBase:
     CORPUS_VERSION = 1 
     def __init__(self, persist_dir="./knowledge_db"):
         self.persist_dir = persist_dir
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        _dev = (os.getenv("EMBEDDING_DEVICE") or os.getenv("VISION_DEVICE") or "").strip().lower()
+        if _dev in {"cuda", "cpu"}:
+            self.device = _dev
+        else:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 
         self.embeddings = None

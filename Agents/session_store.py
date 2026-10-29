@@ -111,16 +111,27 @@ async def assert_owner(
     redis_factory: RedisFactory,
     session_id: str,
     requester_id: Optional[str],
+    fallback: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
 ) -> None:
-    """校验会话归属，失败抛 PermissionError（fail-closed）。"""
+    """
+    验证会话归属，会话归属记录在 Redis 中，TTL 与会话一致。
+    """
     if not requester_id:
         raise PermissionError("缺少操作者身份，拒绝访问该会话")
 
     redis_client = await redis_factory()
     owner = await redis_client.get(f"{OWNER_KEY_PREFIX}{session_id}")
 
+    if owner is None and fallback is not None:
+        # Redis 已过期（或会话来自冷存储恢复）→ 回查权威来源
+        try:
+            owner = await fallback(session_id)
+        except Exception as e:
+            logger.error(f"归属回查失败 [{session_id}]: {e}")
+            raise PermissionError("会话归属校验暂时不可用，请稍后重试")
+
     if owner is None:
-        # 历史会话（归属记录机制上线前创建）无归属记录 → 拒绝，避免任意 session_id 越权
+        # 无归属记录
         raise PermissionError(
             f"会话 [{session_id}] 无归属记录，拒绝访问（请重新发起诊断）"
         )

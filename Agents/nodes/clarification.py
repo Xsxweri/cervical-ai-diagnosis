@@ -15,8 +15,6 @@ from utils.uncertainty import MAX_CLARIFICATION_ROUNDS
 async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     """高不确定性时主动追问关键信息"""
     cv_result = state.get("cv_result", {}) or {}
-    llm = get_llm()
-    structured_llm = llm.with_structured_output(ClarificationResponse)
 
     # 基于细胞特征生成追问问题
     prompt = render(
@@ -28,6 +26,8 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     )
 
     try:
+        llm = get_llm()
+        structured_llm = llm.with_structured_output(ClarificationResponse)
         result = await structured_llm.ainvoke(prompt)
         questions = result.questions or CLARIFICATION_FALLBACK_QUESTIONS
     except Exception as e:

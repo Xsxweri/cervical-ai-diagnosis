@@ -3,22 +3,22 @@
 
 后续扩展 WSI 时以此为起点。接线前必须补齐以下缺口：
 
-  1. 读取：SVS 是金字塔 TIFF，`cv2.imread` 无法读取 → 需 openslide-python
-     （Windows 上另需 openslide-bin 提供 DLL）；
-  2. 内存：当前 `cv2.imread` 整片读入，千兆像素图会 OOM → 应按 level 分块 ReadRegion；
-  3. 背景：全片大部分为空白，当前逐块推理浪费 90%+ 算力，且稀释"异常占比"
-     → 需先做组织掩膜（如 Otsu + 面积阈值）；
-  4. 边缘块：`split_image` 会把残片 resize 成 224×224，长宽比失真
-     → 应 padding 或直接丢弃过小块；
-  5. 聚合：`merge_predictions` 对**类别索引**取平均（如 (0+4)/2=2）无语义
-     → 应改为概率投票 / 按 patch 计数；
-  6. 级联：当前只调分类模型，未复用 `services.vision_service` 的二分类+多分类+形态学链路，
-     因此产不出 cells / abnormal_cells，无法喂给 `DiagnosisState`；
-  7. API：`.svs` 目前在 `agent_api.py` 的上传白名单之外（会被 400 拒绝）；
-     接线时需同步放开，并改为异步任务（前端 axios 超时 120s，WSI 必然超时）。
+  决策理由（不是工作量问题，是前提不成立）：
+  1. 无宫颈细胞学 WSI 标注数据集 → 无法给出任何敏感性/特异性；
+  2. 检测/分类模型训练于单细胞裁剪图（SIPaKMeD CROPPED / Herlev），
+     与全片尺度存在域偏移；
+  3. 第 3 条缺口的「组织占少数、用 Otsu 找组织」是**组织学**假设；
+     细胞学涂片的细胞单层铺满整个圆盘，圆盘内按组织密度筛块会
+     静默丢掉散在异常细胞 —— 这是医学上错误的，规格需重写；
+  4. 单片吞吐：4.8e9 px / 512² ≈ 1.1 万块，GPU 40–90 分钟/片，
+     与病理科日均数百片不匹配。
 
-⚠️ 以上完成前，**请勿**把 `.svs` 加进 `agent_api.py` 的 `allowed_exits`——
-   否则用户会拿到难以理解的 500（内部错误编号），而不是明确的"暂不支持"。
+**重新启动的条件（全部满足才动）**：
+  * 获得 ≥100 例带病变级标注的 LBC / Pap WSI；
+  * 在 WSI 分块上重训检测器，而非复用 SIPaKMeD 的 YOLO；
+  * 前置完成「大 FOV 分块推理」并用 RIVA 验证（见
+    utils/tiling.py 的规划）——那是单细胞裁剪图到真实视野的
+    必要跨越，也是 WSI 的低成本前置。
 """
 import numpy as np
 import cv2

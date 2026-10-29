@@ -134,19 +134,17 @@ _RISK_ORDER: List[str] = ["low", "medium", "high", "emergency"]
 
 
 def abnormal_classes_for(label_space: str) -> set:
-    """返回该标签空间下的异常类集合；未知空间直接报错，不静默回退。"""
-    if label_space == "herlev":
-        return set(HERLEV_ABNORMAL_CLASSES)
-    if label_space == "sipakmed":
-        return set(SIPAKMED_ABNORMAL_CLASSES)
-    raise ValueError(f"未知标签空间 '{label_space}'，可选: sipakmed / herlev")
+    """返回该标签空间下的异常类集合；未知空间直接报错，不静默回退"""
+    if label_space not in _SPACE_PARTITIONS:
+        raise ValueError(
+            f"未知标签空间 '{label_space}'，可选: {sorted(_SPACE_PARTITIONS)}"
+        )
+    return set(_SPACE_PARTITIONS[label_space][2])
 
 
 def risk_floor_for(cls: str, label_space: str) -> str | None:
-    """该类别对病例级风险的下限；无下限返回 None。"""
-    if label_space != "herlev":
-        return None
-    return HERLEV_RISK_FLOOR.get(cls)
+    """该类别对病例级风险的下限；无下限返回 None"""
+    return _RISK_FLOOR_BY_SPACE.get(label_space, {}).get(cls)
 
 
 def severity_tier_for(cls: str) -> str | None:
@@ -193,7 +191,69 @@ MULTICLASS_SPACES: Dict[str, List[str]] = {
     "sipakmed": list(SIPAKMED_CLASSES),
     "herlev": list(HERLEV_CLASSES),
 }
+
+_SPACE_PARTITIONS: Dict[str, tuple] = {
+    # space: (normal, benign, abnormal)
+    "sipakmed": (SIPAKMED_NORMAL_CLASSES, SIPAKMED_BENIGN_CLASSES, SIPAKMED_ABNORMAL_CLASSES),
+    "herlev": (HERLEV_NORMAL_CLASSES, set(), HERLEV_ABNORMAL_CLASSES),
+}
+
+_RISK_FLOOR_BY_SPACE: Dict[str, Dict[str, str]] = {
+    "sipakmed": {},                 # SIPaKMeD 无 ordinal 分级，不设下限
+    "herlev": HERLEV_RISK_FLOOR,
+}
+
 DEFAULT_LABEL_SPACE = "sipakmed"
+
+def validate_label_spaces() -> None:
+    """校验每个已注册标签空间的元数据完整性。
+
+    为什么需要：新增标签空间要改 5+ 处，其中「严重度档位 / 风险下限 / RAG 检索词」
+    的漏改不会报错，只会让结果静默变差（判为"一致"、风险低估、检索质量下降）。
+    放在模块导入时校验，等于用一次 AssertionError 换掉三类隐性 bug。
+    """
+    assert set(MULTICLASS_SPACES) == set(_SPACE_PARTITIONS), (
+        f"标签空间注册表与三分区表不一致："
+        f"仅注册 {sorted(set(MULTICLASS_SPACES) - set(_SPACE_PARTITIONS))}，"
+        f"仅分区 {sorted(set(_SPACE_PARTITIONS) - set(MULTICLASS_SPACES))}"
+    )
+
+    for space, classes in MULTICLASS_SPACES.items():
+        cs = set(classes)
+        assert len(cs) == len(classes), f"{space}: 类别列表存在重复 {classes}"
+
+        normal, benign, abnormal = _SPACE_PARTITIONS[space]
+        normal, benign, abnormal = set(normal), set(benign), set(abnormal)
+
+        # 1) 三分区
+        assert normal.isdisjoint(benign) and normal.isdisjoint(abnormal) \
+            and benign.isdisjoint(abnormal), f"{space}: 正常/良性/异常三档存在重叠"
+        assert normal | benign | abnormal == cs, (
+            f"{space}: 三分区未覆盖全空间，"
+            f"缺失 {sorted(cs - (normal | benign | abnormal))}，"
+            f"多余 {sorted((normal | benign | abnormal) - cs)}"
+        )
+
+        # 2) 严重度档位
+        missing_tier = cs - set(SEVERITY_TIER)
+        assert not missing_tier, f"{space}: 缺少严重度档位 {sorted(missing_tier)}"
+        bad_tier = {c for c in cs if SEVERITY_TIER[c] not in TIER_RANK}
+        assert not bad_tier, f"{space}: 严重度档位未在 TIER_RANK 中定义 {sorted(bad_tier)}"
+
+        # 3) 风险下限
+        floor = _RISK_FLOOR_BY_SPACE.get(space, {})
+        if space == "sipakmed":
+            assert not floor, "sipakmed 不应设置风险下限（无 ordinal 分级语义）"
+        else:
+            missing_floor = abnormal - set(floor)
+            assert not missing_floor, (
+                f"{space}: 异常类缺少风险下限 {sorted(missing_floor)}"
+                f"（无下限会在低占比时低估风险）"
+            )
+            bad_floor = {c for c, lv in floor.items() if lv not in _RISK_ORDER}
+            assert not bad_floor, f"{space}: 风险下限取值非法 {sorted(bad_floor)}"
+
+validate_label_spaces()
 
 def get_multiclass_classes(label_space: str = DEFAULT_LABEL_SPACE) -> List[str]:
     """返回指定多分类标签空间的类别列表；未知空间直接报错，不静默回退。"""
