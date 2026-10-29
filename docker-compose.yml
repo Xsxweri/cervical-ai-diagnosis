@@ -1,0 +1,115 @@
+# 基础设施编排：PostgreSQL
+# Redis 由宿主机既有的 redis-stack 实例提供（需 RediSearch + RedisJSON），
+# 本 compose 不管理其生命周期。切换新环境时按 README 自行启动。
+# 启动：docker compose up -d
+# 按需：docker compose up -d postgres   （只起数据库）
+
+name: cervix   # 固定 project name，见下方「卷命名」说明
+
+# 全局日志轮转：Docker 默认 json-file 无上限，是最常见的磁盘杀手
+# 每个容器 3 × 10MB = 30MB 上限，滚动覆盖
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    compress: "true"   # 轮转文件 gzip，实际占用再降约 70%
+
+services:
+  postgres:
+    image: postgres:16-alpine          # 固定主版本，不用 :latest
+    container_name: cervix-pg
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: cervix
+      POSTGRES_USER: cervix
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD 未设置，请在 .env 中配置}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Shanghai
+      # 保留 PG 自身日志 7 天（随容器销毁而失效，真正的日志由 logging driver 管）
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # 小数据量调优：避免容器吃满内存，也避免与 GPU 推理抢 RAM
+    command:
+      - "postgres"
+      - "-c" 
+      - "shared_buffers=256MB"
+      - "-c" 
+      - "work_mem=8MB"
+      - "-c" 
+      - "maintenance_work_mem=64MB"
+      - "-c" 
+      - "max_connections=50"
+      - "-c" 
+      - "max_wal_size=1GB"          # WAL 循环使用，超限即强制 checkpoint 回收
+      - "-c" 
+      - "min_wal_size=80MB"
+      - "-c" 
+      - "log_min_duration_statement=1000"   # 慢查询 >1s 才记，避免日志刷屏
+      - "-c" 
+      - "log_line_prefix=%m [%p] %q%u@%d "
+      - "-c" 
+      - "log_timezone=Asia/Shanghai"
+      - "-c" 
+      - "autovacuum_vacuum_scale_factor=0.05"  # 小表更积极回收膨胀
+    ports:
+      - "127.0.0.1:15432:5432"            # 只绑本机；避开可能被占用的 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # 命名卷，不用 bind mount
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb                       # 默认 64MB，并行查询会报 not enough shared memory
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cervix -d cervix"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s                   # initdb 首次初始化需要时间
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    networks: [cervix-net]
+
+  # 可选工具：默认不启动，按需 `docker compose --profile tools up -d`
+  adminer:
+    image: adminer:4
+    container_name: cervix-adminer
+    profiles: ["tools"]
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [cervix-net]
+
+  # 每日备份：默认不启动，`docker compose --profile backup up -d`
+  # 备份文件写到宿主机的 outputs/backup（.gitignore 已覆盖 outputs/）
+  pgbackup:
+    image: postgres:16-alpine
+    container_name: cervix-pgbackup
+    profiles: ["backup"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      PGPASSWORD: ${PG_PASSWORD:?PG_PASSWORD 未设置}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./outputs/backup:/backup
+      - ./docker/scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/pg_backup_loop.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [cervix-net]
+
+networks:
+  cervix-net:
+    name: cervix-net               # 固定网络名，避免项目名变化导致重建
+
+volumes:
+  # 显式 name：否则卷名会带 project 前缀（cervix_pgdata），
+  # 一旦 COMPOSE_PROJECT_NAME 或目录名变化，会挂到一个全新的空卷上，数据"消失"
+  pgdata:
+    name: cervix-pgdata
