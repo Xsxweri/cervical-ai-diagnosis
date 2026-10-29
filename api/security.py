@@ -7,8 +7,12 @@ import uuid
 
 from fastapi import HTTPException
 from PIL import Image
+from fastapi import Depends
 
-from api.config import ALLOWED_MIME, ALLOWED_EXTS, MAGIC_BYTES
+import repos.user_repo as user_repo
+from core.auth import verify_token
+
+from api.config import ALLOWED_EXTS, ALLOWED_MIME, GENERIC_MIMES, MAGIC_BYTES
 
 logger = logging.getLogger("agent_api")
 
@@ -36,8 +40,8 @@ def validate_file_content(content: bytes, filename: str, content_type: str | Non
 
     allowed = ALLOWED_MIME.get(ext)
     if allowed and content_type:
-        allowed_set = allowed if isinstance(allowed, (set, frozenset, tuple, list)) else {allowed}
-        if content_type not in allowed_set:
+        base = content_type.split(";", 1)[0].strip().lower()
+        if base not in GENERIC_MIMES and base not in allowed:
             raise HTTPException(status_code=400, detail="Content-Type 与文件类型不符")
 
     sig = MAGIC_BYTES.get(ext)
@@ -50,3 +54,38 @@ def validate_file_content(content: bytes, filename: str, content_type: str | Non
                 img.verify()
         except Exception:
             raise HTTPException(status_code=400, detail=f"文件不是有效图片: {filename}")
+
+
+async def require_admin(payload: dict = Depends(verify_token)) -> dict:
+    """
+    管理员门禁
+    """
+    uid = payload.get("uid")
+    if uid is None:
+        raise HTTPException(status_code=403, detail="缺少操作者标识")
+
+    user = await user_repo.get_by_id(int(uid))
+    if not user:
+        raise HTTPException(status_code=403, detail="账号不存在")
+    if not user["is_active"]:
+        raise HTTPException(status_code=403, detail="账号已停用")
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+async def require_sysadmin(payload: dict = Depends(verify_token)) -> dict:
+    """
+    系统管理员门禁，账号管理专用
+    """
+    uid = payload.get("uid")
+    if uid is None:
+        raise HTTPException(status_code=403, detail="缺少操作者标识")
+
+    user = await user_repo.get_by_id(int(uid))
+    if not user:
+        raise HTTPException(status_code=403, detail="账号不存在")
+    if not user["is_active"]:
+        raise HTTPException(status_code=403, detail="账号已停用")
+    if user["role"] != "sysadmin":
+        raise HTTPException(status_code=403, detail="需要系统管理员权限")
+    return user

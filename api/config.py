@@ -3,15 +3,9 @@
 """
 
 import os
+import core.env  # noqa: F401
 
-# 项目根目录：本文件位于 <root>/api/config.py
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# --- 账号与环境 ---
-ACCOUNTS_PATH = os.getenv(
-    "DOCTOR_ACCOUNTS_PATH",
-    os.path.join(_ROOT, "appWeb", "doctor_accounts.json"),
-)
 SERVICE_LOCATION = os.getenv("SERVICE_LOCATION", "未知地点")
 
 # --- 日志目录（建目录的动作留给 logging_setup，避免 import 期副作用）---
@@ -43,11 +37,17 @@ MAGIC_BYTES: dict[str, list[bytes]] = {
 }
 
 # 允许的 MIME 类型
-ALLOWED_MIME: dict[str, str] = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-    ".bmp": "image/bmp",
+ALLOWED_MIME: dict[str, set[str]] = {
+    ".jpg":  {"image/jpeg"},
+    ".jpeg": {"image/jpeg", "image/jpg"},
+    ".png":  {"image/png"},
+    ".tif":  {"image/tiff"},
+    ".tiff": {"image/tiff", "image/x-tiff"},
+    ".bmp":  {"image/bmp", "image/x-bmp", "image/x-ms-bmp"},
+}
+
+GENERIC_MIMES: set[str] = {
+    "",
+    "application/octet-stream",
+    "binary/octet-stream",
 }
