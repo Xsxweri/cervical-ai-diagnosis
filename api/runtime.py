@@ -3,8 +3,11 @@
 """
 
 import os
+import logging
+import core.env  # noqa: F401
 from datetime import datetime
 from functools import lru_cache
+from typing import Optional 
 from zoneinfo import ZoneInfo
 
 from fastapi import Request, WebSocket
@@ -13,6 +16,10 @@ from slowapi.util import get_remote_address
 
 from Agents.conversation import ConversationManager
 from api.config import SERVICE_LOCATION
+from arq.connections import ArqRedis
+from core.redis_client import REDIS_URL
+
+logger = logging.getLogger("runtime")
 
 TRUST_PROXY = os.getenv("TRUST_PROXY", "false").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -71,3 +78,38 @@ def build_time_location() -> str:
 def get_conversation_manager() -> ConversationManager:
     """依赖注入用单例；lru_cache 保证整个进程只建一个实例。"""
     return ConversationManager()
+
+
+# ============ 任务队列（arq） ============
+
+_arq_pool: Optional[ArqRedis] = None
+
+
+async def init_arq_pool() -> None:
+    """在 lifespan 中创建；与 Redis 连接池分离，arq 需要自己的编码约定。"""
+    global _arq_pool
+    if _arq_pool is not None:
+        return
+    from arq import create_pool
+    from arq.connections import RedisSettings
+
+    _arq_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
+    logger.info("arq 队列连接已建立")
+
+
+async def close_arq_pool() -> None:
+    global _arq_pool
+    if _arq_pool is not None:
+        await _arq_pool.aclose()
+        _arq_pool = None
+
+
+def get_arq_pool() -> ArqRedis:
+    if _arq_pool is None:
+        raise RuntimeError("arq 未初始化：请检查 DIAGNOSIS_MODE 与 lifespan")
+    return _arq_pool
+
+
+def diagnosis_mode() -> str:
+    """sync | queue。未知值按 sync 处理并在启动时告警（见 lifespan）。"""
+    return os.getenv("DIAGNOSIS_MODE", "sync").strip().lower()
