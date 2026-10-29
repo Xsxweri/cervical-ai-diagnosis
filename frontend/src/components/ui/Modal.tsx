@@ -15,6 +15,12 @@ const FOCUSABLE =
 
 export default function Modal({ open, onClose, title, children, maxWidth = 'max-w-2xl' }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -23,7 +29,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab' || !panelRef.current) return;
@@ -43,13 +49,16 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
 
     document.addEventListener('keydown', onKeyDown);
     // 打开时把焦点移入对话框
-    panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    const target =
+      bodyRef.current?.querySelector<HTMLElement>(FOCUSABLE) ??
+      panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+    target?.focus();
 
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -80,7 +89,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
             <X size={20} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
+        <div ref={bodyRef} className="flex-1 overflow-y-auto p-5">{children}</div>
       </div>
     </div>
   );

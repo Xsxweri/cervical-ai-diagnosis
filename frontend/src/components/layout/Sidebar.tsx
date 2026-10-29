@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Sparkles, ScanSearch, History, X } from 'lucide-react';
+import { History, LayoutDashboard, ScanSearch, ShieldCheck, Sparkles, X } from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/', label: '判读台', icon: LayoutDashboard, end: true },
@@ -21,10 +21,14 @@ function BrandMark({ className = '' }: { className?: string }) {
 interface Props {
   open: boolean;
   onClose: () => void;
+  isSysAdmin?: boolean;
 }
 
-export default function Sidebar({ open, onClose }: Props) {
-  return (
+export default function Sidebar({ open, onClose, isSysAdmin=false }: Props) {
+  const items = isSysAdmin
+    ? [...NAV_ITEMS, { to: '/accounts', label: '账号管理', icon: ShieldCheck, end: false }]
+    : NAV_ITEMS;
+   return (
     <>
       {open && (
         <div
@@ -59,7 +63,7 @@ export default function Sidebar({ open, onClose }: Props) {
 
         {/* 导航 */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto" aria-label="主导航">
-          {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+          {items.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}

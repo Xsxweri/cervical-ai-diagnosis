@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { useMe } from '../../libts/session';
 import Sidebar from './Sidebar';
 import Header from './Header';
 
@@ -8,9 +9,11 @@ const TITLES: Record<string, string> = {
   '/diagnose': '智能诊断',
   '/analyze': '快速分析',
   '/history': '本机最近记录',
+  '/accounts': '账号管理', 
 };
 
 export default function AppLayout() {
+  const { me } = useMe();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { pathname } = useLocation();
   const title = TITLES[pathname] ?? '判读台';
@@ -25,7 +28,7 @@ export default function AppLayout() {
         跳到主要内容
       </a>
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} isSysAdmin={me?.role === 'sysadmin'} />
 
       <div className="lg:pl-60 min-h-screen flex flex-col">
         <Header title={title} onMenuClick={() => setSidebarOpen(true)} />

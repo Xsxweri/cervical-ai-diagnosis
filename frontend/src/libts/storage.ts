@@ -1,10 +1,11 @@
-import type { HistoryRecord } from '../types';
+import type { HistoryRecord,UserPublic } from '../types';
 
 const KEY = 'cervical-diagnosis-history';
 const TOKEN_KEY = 'cervical-auth-token';
 const MAX = 50;
 
 const DOCTOR_KEY = 'cervical-doctor-profile';
+const ME_KEY = 'cervical-me';
 
 export interface DoctorProfile {
   name?: string;
@@ -18,6 +19,24 @@ export function getDoctor(): DoctorProfile | null {
     return raw ? (JSON.parse(raw) as DoctorProfile) : null;
   } catch {
     return null;
+  }
+}
+
+export function getCachedMe(): UserPublic | null {
+  try {
+    const raw = localStorage.getItem(ME_KEY);
+    return raw ? (JSON.parse(raw) as UserPublic) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedMe(me: UserPublic | null): void {
+  try {
+    if (me) localStorage.setItem(ME_KEY, JSON.stringify(me));
+    else localStorage.removeItem(ME_KEY);
+  } catch {
+    /* noop */
   }
 }
 
@@ -56,6 +75,7 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   try {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ME_KEY); 
   } catch {
     /* noop */
   }

@@ -89,6 +89,10 @@
   .table-base tbody tr {
     @apply hover:bg-glass/60 transition-colors;
   }
+
+  .hint {
+    @apply mt-1.5 text-[11.5px] leading-relaxed text-muted;
+  }
 }
 
 @layer utilities {

@@ -46,6 +46,11 @@ export interface CVResult {
   label_space?: 'sipakmed' | 'herlev' | null;
   multiclass_abnormal_classes?: string[] | null;
   grading_conflict_count?: number;
+  dual_conflict_count?: number;
+  conflict_count?: number;
+  dual_mode?: boolean;
+  primary_label_space?: 'sipakmed' | 'herlev' | null;
+  aux_label_space?: 'sipakmed' | 'herlev' | null;
   review_required?: boolean;
 }
 
@@ -72,6 +77,11 @@ export interface AgentResponse {
   label_space?: 'sipakmed' | 'herlev' | null;
   multiclass_abnormal_classes?: string[] | null;
   grading_conflict_count?: number;
+  dual_conflict_count?: number;
+  conflict_count?: number;
+  dual_mode?: boolean;
+  primary_label_space?: 'sipakmed' | 'herlev' | null;
+  aux_label_space?: 'sipakmed' | 'herlev' | null;
   review_required?: boolean;
   cells?: CellResult[];
 }
@@ -131,3 +141,56 @@ export interface WSMessage {
   content?: string;
   message?: string;
 }
+
+/** 可读角色（含 sysadmin） */
+export type UserRole = 'doctor' | 'admin' | 'sysadmin';
+
+/** 可写角色：sysadmin 不可通过接口授予 */
+export type AssignableRole = 'doctor' | 'admin';
+
+/** 账号公开信息（后端 UserPublic，永不含 password_hash） */
+export interface UserPublic {
+  id: number;
+  username: string;
+  name?: string | null;
+  department?: string | null;
+  hospital?: string | null;
+  role: UserRole;
+  is_active: boolean;
+  created_at?: string | null;
+  last_login_at?: string | null;
+  failed_attempts: number;
+  locked_until?: string | null;
+}
+
+export interface UserCreateInput {
+  username: string;
+  password: string;
+  name?: string;
+  department?: string;
+  hospital?: string;
+  role: AssignableRole;
+}
+
+export interface UserUpdateInput {
+  name?: string;
+  department?: string;
+  hospital?: string;
+  role?: AssignableRole;
+  is_active?: boolean;
+}
+
+/** 任务状态（queue 模式） */
+export interface TaskAccepted {
+  session_id: string;
+  task_status: 'queued';
+  queue: string;
+  poll_interval_ms: number;
+}
+
+export type TaskState = 'queued' | 'running' | 'done' | 'failed';
+
+export type TaskStatusResponse =
+  | { task_status: 'queued' | 'running'; session_id: string }
+  | { task_status: 'failed'; session_id: string; error: string }
+  | ({ task_status: 'done' } & SessionResponse);

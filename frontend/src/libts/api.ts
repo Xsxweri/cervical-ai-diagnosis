@@ -1,5 +1,8 @@
 import axios from 'axios';
-import type { AgentResponse, CVResult, FollowUpResponse, HealthResponse, SessionResponse, SystemInfoResponse, } from '../types';
+import type {
+  AgentResponse, CVResult, FollowUpResponse, HealthResponse, SessionResponse,
+  SystemInfoResponse, UserCreateInput, UserPublic, UserUpdateInput, TaskAccepted, TaskStatusResponse
+} from '../types';
 import { getToken, setToken, clearToken, setDoctor } from './storage';
 
 export const API_BASE: string =
@@ -76,6 +79,20 @@ export async function fetchSessionImage(sessionId: string): Promise<string> {
   return URL.createObjectURL(data);
 }
 
+/** 读取会话的 Grad-CAM 叠加图（ENABLE_GRADCAM=false 时返回 404） */
+export async function fetchSessionGradcam(sessionId: string): Promise<string> {
+  const res = await http.get(
+    `/api/agent/session/${encodeURIComponent(sessionId)}/gradcam`,
+    { responseType: 'blob' },
+  );
+  return URL.createObjectURL(res.data);
+}
+
+/** 按需生成 Grad-CAM（幂等：已生成则直接返回） */
+export async function generateSessionGradcam(sessionId: string): Promise<void> {
+  await http.post(`/api/agent/session/${encodeURIComponent(sessionId)}/gradcam`);
+}
+
 /** 单张图片快速分析 */
 export async function analyzeImage(file: File): Promise<CVResult> {
   const fd = new FormData();
@@ -101,10 +118,18 @@ export async function analyzeZip(file: File): Promise<Record<string, CVResult>> 
 }
 
 /** Agent：上传图像并启动诊断 */
-export async function agentUpload(file: File, signal?: AbortSignal): Promise<AgentResponse> {
+export async function agentUpload(file: File, signal?: AbortSignal): Promise<TaskAccepted | AgentResponse> {
   const fd = new FormData();
   fd.append('file', file);
-  const { data } = await http.post<AgentResponse>('/api/agent/upload', fd, { signal });
+  const { data } = await http.post<TaskAccepted | AgentResponse>('/api/agent/upload', fd, { signal });
+  return data;
+}
+
+/** Agent：查询诊断任务状态（轮询用） */
+export async function fetchTaskStatus(sessionId: string): Promise<TaskStatusResponse> {
+  const { data } = await http.get<TaskStatusResponse>(
+    `/api/agent/task/${encodeURIComponent(sessionId)}`,
+  );
   return data;
 }
 
@@ -165,4 +190,48 @@ export function connectAgentWS(sessionId: string, opts: WSOptions): WebSocket {
     }
   };
   return ws;
+}
+
+// ============ 账号管理 ============
+
+/** 当前账号信息（任意已登录角色；role 来自 DB，非 JWT claim） */
+export async function fetchMe(): Promise<UserPublic> {
+  const { data } = await http.get<UserPublic>('/api/accounts/me');
+  return data;
+}
+
+/** 修改自己的密码（必须验旧密码） */
+export async function changeOwnPassword(oldPassword: string, newPassword: string): Promise<void> {
+  await http.post('/api/accounts/me/password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
+}
+
+/** 账号列表（仅 admin） */
+export async function fetchAccounts(): Promise<UserPublic[]> {
+  const { data } = await http.get<UserPublic[]>('/api/accounts');
+  return data;
+}
+
+/** 新建账号（仅 admin）。用户名重复 → 409 */
+export async function createAccount(input: UserCreateInput): Promise<UserPublic> {
+  const { data } = await http.post<UserPublic>('/api/accounts', input);
+  return data;
+}
+
+/** 修改账号（仅 admin）。停用最后一个管理员 → 409 */
+export async function updateAccount(userId: number, input: UserUpdateInput): Promise<UserPublic> {
+  const { data } = await http.patch<UserPublic>(`/api/accounts/${userId}`, input);
+  return data;
+}
+
+/** 重置他人密码（仅 admin） */
+export async function resetAccountPassword(userId: number, password: string): Promise<void> {
+  await http.post(`/api/accounts/${userId}/password`, { password });
+}
+
+/** 解除登录锁定（仅 admin） */
+export async function unlockAccount(userId: number): Promise<void> {
+  await http.post(`/api/accounts/${userId}/unlock`);
 }

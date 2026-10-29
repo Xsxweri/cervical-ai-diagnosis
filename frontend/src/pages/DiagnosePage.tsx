@@ -94,6 +94,10 @@ export default function DiagnosePage() {
           cells={diag.cvCells}
           specimenFile={file}
           specimenUrl={diag.specimenUrl}
+          gradcamUrl={diag.gradcamUrl}
+          gradcamLoading={diag.gradcamLoading}
+          gradcamError={diag.gradcamError}
+          onRequestGradcam={diag.requestGradcam}
           chatOpen={diag.step === 'chat'}
           onChat={diag.startChat}
           onReset={diag.reset}
@@ -389,6 +393,10 @@ function ReportStep({
   metrics,
   specimenFile,
   specimenUrl,
+  gradcamUrl,
+  gradcamLoading,
+  gradcamError,
+  onRequestGradcam,
   cells,
   chatOpen,
   onChat,
@@ -415,6 +423,10 @@ function ReportStep({
   };
   specimenFile?: File | null;
   specimenUrl?: string | null;
+  gradcamUrl?: string | null;
+  gradcamLoading?: boolean;
+  gradcamError?: string | null;
+  onRequestGradcam?: () => void;
   cells?: CellResult[];
   onChat: () => void;
   onReset: () => void;
@@ -488,6 +500,7 @@ function ReportStep({
                         {s.body}
                       </div>
                     </section>
+                  
                   ) : (
                     <div
                       key={i}
@@ -526,6 +539,42 @@ function ReportStep({
               <p className="mt-1.5 text-[12px] text-muted">
                 红框为异常细胞，绿框为正常细胞；框位与细胞表序号一致。
               </p>
+            </section>
+          )}
+
+          {cells && cells.length > 0 && (
+            <section className="mt-6">
+              <h3 className="title-serif text-[15px]">AI 关注区域 · Grad-CAM</h3>
+
+              {gradcamUrl ? (
+                <>
+                  <img
+                    src={gradcamUrl}
+                    alt="Grad-CAM 注意力热力图叠加"
+                    className="mt-2 h-56 w-full rounded-md border border-hairline object-contain"
+                  />
+                  <p className="mt-1.5 text-[12px] text-muted">
+                    高亮区域为模型判定时主要关注的部位。该描述仅反映注意力在裁剪框内的分布，
+                    未判定是否落在细胞核上，应结合镜检复核。
+                  </p>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="btn-secondary mt-2"
+                    disabled={gradcamLoading}
+                    onClick={onRequestGradcam}
+                  >
+                    {gradcamLoading ? '正在生成…' : '生成热力图'}
+                  </button>
+                  <p className="mt-1.5 text-[12px] text-muted">
+                    按需生成，需额外一次模型推理（约 0.1–0.3 秒）。
+                  </p>
+                  {gradcamError && (
+                    <p className="mt-1.5 text-[12px] text-risk-high">{gradcamError}</p>
+                  )}
+                </>
+              )}
             </section>
           )}
 

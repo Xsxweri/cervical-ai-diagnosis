@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentResponse, CellResult, RiskLevel } from '../types';
-import { agentClarify, agentFollowUp, agentUpload, connectAgentWS, fetchSession, fetchSessionImage } from '../libts/api';
+import type { AgentResponse, CellResult, RiskLevel, SessionResponse, TaskAccepted } from '../types';
+import { agentClarify, agentFollowUp, agentUpload, connectAgentWS, fetchSession, fetchSessionImage, fetchSessionGradcam, fetchTaskStatus, generateSessionGradcam } from '../libts/api';
 import { riskFromText } from '../libts/format';
 import { addHistory } from '../libts/storage';
 
@@ -37,6 +37,9 @@ export function useDiagnosis() {
   const [conflictCount, setConflictCount] = useState(0);
   const [reportAt, setReportAt] = useState<number | null>(null);
   const [specimenUrl, setSpecimenUrl] = useState<string | null>(null);
+  const [gradcamUrl, setGradcamUrl] = useState<string | null>(null);
+  const [gradcamLoading, setGradcamLoading] = useState(false);
+  const [gradcamError, setGradcamError] = useState<string | null>(null);
   const [cvCells, setCvCells] = useState<CellResult[]>([]);
   const [cvMetrics, setCvMetrics] = useState<{
     totalCells: number | null;
@@ -95,7 +98,7 @@ export function useDiagnosis() {
       setDecisionReason(res.decision_reason ?? null);
       setClarificationRounds(res.clarification_rounds ?? 0);
       setReviewRequired(res.review_required ?? false);
-      setConflictCount(res.grading_conflict_count ?? 0);
+      setConflictCount(res.conflict_count ?? res.grading_conflict_count ?? 0);
       setCvMetrics({
         totalCells: res.total_cells ?? null,
         abnormalCells: res.abnormal_cells ?? null,
@@ -142,6 +145,31 @@ export function useDiagnosis() {
     [connectWS, pushMessage],
   );
 
+  const POLL_MAX_MS = 10 * 60 * 1000;
+
+  function isAccepted(r: unknown): r is TaskAccepted {
+  return !!r && typeof r === 'object' && (r as TaskAccepted).task_status === 'queued'
+      && !('cells' in (r as object));
+}
+  /** 轮询直到 done / failed / 超时 / 用户取消 */
+  async function waitForTask(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<SessionResponse> {
+    const started = Date.now();
+    await new Promise((r) => setTimeout(r, 1500));
+    for (;;) {
+      if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+      if (Date.now() - started > POLL_MAX_MS) {
+        throw new Error('诊断超时（超过 10 分钟），请稍后在历史记录中查看');
+      }
+      const st = await fetchTaskStatus(sessionId);
+      if (st.task_status === 'done') return st;
+      if (st.task_status === 'failed') throw new Error(st.error || '诊断失败');
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+
   const start = useCallback(
     async (file: File) => {
       filenameRef.current = file.name;
@@ -158,7 +186,10 @@ export function useDiagnosis() {
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const res = await agentUpload(file, controller.signal);
+        const raw = await agentUpload(file, controller.signal);
+        const res = isAccepted(raw)
+          ? await waitForTask(raw.session_id, controller.signal)
+          : (raw as AgentResponse);
         setSessionId(res.session_id);
         if (res.status === 'awaiting_clarification' && res.questions?.length) {
           setQuestions(res.questions);
@@ -210,6 +241,11 @@ export function useDiagnosis() {
             // 原图可能已被清理：报告仍可阅读，只是缺少证据图
             setSpecimenUrl(null);
           }
+        }
+        try {
+          setGradcamUrl(await fetchSessionGradcam(sid));
+        } catch {
+          setGradcamUrl(null);
         }
       } catch (e) {
         const status = (e as { response?: { status?: number } }).response?.status;
@@ -297,6 +333,24 @@ export function useDiagnosis() {
     [isSending, sessionId, pushMessage]
   );
 
+  /** 按需生成并加载 Grad-CAM（用户点击时触发） */
+  const requestGradcam = useCallback(async () => {
+    if (!sessionId || gradcamLoading || gradcamUrl) return;
+    setGradcamLoading(true);
+    setGradcamError(null);
+    try {
+      await generateSessionGradcam(sessionId);
+      setGradcamUrl(await fetchSessionGradcam(sessionId));
+    } catch (e) {
+      // 解析后端 detail（axios 错误体）
+      const detail =
+        (e as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      setGradcamError(detail ?? '热力图生成失败，请稍后重试');
+    } finally {
+      setGradcamLoading(false);
+    }
+  }, [sessionId, gradcamLoading, gradcamUrl]);
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -318,6 +372,9 @@ export function useDiagnosis() {
     setConflictCount(0);
     setReportAt(null);
     setSpecimenUrl(null);
+    setGradcamUrl(null);
+    setGradcamLoading(false);
+    setGradcamError(null);
     setCvCells([]);
     setCvMetrics({
       totalCells: null,
@@ -354,6 +411,9 @@ export function useDiagnosis() {
     isLoading,
     isSending,
     specimenUrl,
+    gradcamUrl,
+    gradcamLoading,
+    gradcamError,
     cvMetrics,
     cvCells,
     start,
@@ -363,6 +423,7 @@ export function useDiagnosis() {
     startChat,
     closeChat,
     sendMessage,
+    requestGradcam,
     reset,
   };
 }
