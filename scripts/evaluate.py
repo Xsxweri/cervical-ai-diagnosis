@@ -1,8 +1,5 @@
-import sys
 import os
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve
 import argparse
@@ -10,17 +7,14 @@ import json
 import matplotlib.pyplot as plt
 import logging
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.insert(0, project_root)
 
-# 现在可以正常导入项目模块
+# 项目已通过 pip install -e . 安装，项目根由 .pth 提供，无需 sys.path 自举
 from utils import create_data_loaders, load_config
 from utils.label_mapping import BINARY_CLASSES, get_multiclass_classes, DEFAULT_LABEL_SPACE
 from models.cer_cancer_model import CervicalCancerModel
 from services.vision_service import mc_dropout_predict
 
+logger = logging.getLogger(__name__)
 
 class EMA:
     """
@@ -108,7 +102,7 @@ def calculate_auc_scores(labels, probs, num_classes):
                 auc_score = roc_auc_score(labels, probs[:, 1])
                 return auc_score
             else:
-                logging.warning("Not enough columns in probs for binary AUC calculation")
+                logger.warning("Not enough columns in probs for binary AUC calculation")
                 return None
         else:
             # 多分类AUC (macro和micro平均)
@@ -117,14 +111,14 @@ def calculate_auc_scores(labels, probs, num_classes):
                 auc_micro = roc_auc_score(labels, probs, multi_class='ovr', average='micro')
                 return auc_macro, auc_micro
             else:
-                logging.warning(
+                logger.warning(
                     f"Probs only has {probs.shape[1]} columns, but {num_classes} classes expected for AUC calculation")
                 return None, None
     except ValueError as e:
-        logging.warning(f"Could not calculate AUC score: {e}")
+        logger.warning(f"Could not calculate AUC score: {e}")
         return None if num_classes == 2 else (None, None)
-    except Exception as e:
-        logging.warning(f"Unexpected error in AUC calculation: {e}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Unexpected error in AUC calculation: {e}")
         return None if num_classes == 2 else (None, None)
 
 
@@ -191,9 +185,6 @@ def detect_model_type_from_state_dict(model_state_dict):
 def create_model_for_evaluation(model_state_dict, num_classes, config, use_attention, attention_type,
                                 force_model_type=None):
     """根据state_dict创建合适的模型"""
-    # 从state_dict键名推断模型类型
-    state_dict_keys = model_state_dict.keys()
-
     # 优先使用强制指定的模型类型
     if force_model_type is not None:
         detected_model_type = force_model_type
@@ -275,7 +266,7 @@ def main():
         print(f"Using specified attention: {use_attention}, type: {attention_type}")
     else:
         # 自动检测注意力机制
-        attention_keys = [key for key in model_state_dict.keys() if 'attention' in key]
+        attention_keys = [key for key in model_state_dict if 'attention' in key]
         use_attention = len(attention_keys) > 0
         attention_type = None
 
@@ -283,13 +274,13 @@ def main():
             # 先判断CBAM（更具体），再判断SE
             if any('ca.' in key or 'sa.' in key or 'cbam' in key.lower() for key in attention_keys):
                 attention_type = 'cbam'
-                print(f"Auto-detected attention: CBAM")
+                print("Auto-detected attention: CBAM")
             elif any('se' in key.lower() for key in attention_keys):
                 attention_type = 'se'
-                print(f"Auto-detected attention: SE")
+                print("Auto-detected attention: SE")
             else:
                 attention_type = 'se'
-                print(f"Auto-detected attention: SE (default)")
+                print("Auto-detected attention: SE (default)")
         else:
             print("No attention mechanism detected")
 
@@ -398,11 +389,11 @@ def main():
             target_names=target_names,
             zero_division=0
         ))
-    except:
+    except (ValueError, TypeError):
         print(classification_report(labels, preds, labels=labels_param, zero_division=0))
 
     # 打印额外指标
-    print(f"\nAdditional Metrics:")
+    print("\nAdditional Metrics:")
     print(f"F1 Macro: {f1_macro:.4f}")
     print(f"F1 Micro: {f1_micro:.4f}")
     print(f"Precision (Macro): {precision:.4f}")

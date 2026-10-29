@@ -1,20 +1,14 @@
 import sys
-import os
 import torch
 import torch.nn as nn
 import numpy as np
 from torchvision import transforms
 import cv2
 import argparse
-import json
 from collections import OrderedDict
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.insert(0, project_root)
-
+# 项目已通过 pip install -e . 安装，项目根由 .pth 提供，无需 sys.path 自举
 from models import CervicalCancerModel
 
 
@@ -278,7 +272,9 @@ def main():
         for i, (class_name, prob) in enumerate(zip(class_names, probabilities)):
             print(f'  {class_name}: {prob:.4f}')
 
-    except Exception as e:
+    except Exception as e: # noqa: BLE001
+        # 顶层入口：任何异常都转成退出码而非堆栈，便于批处理脚本判断结果。
+        # 具体错误已打印，无需按类型区分。
         print(f"预测过程中发生错误: {e}")
         return 1
 

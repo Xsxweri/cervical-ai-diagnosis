@@ -225,3 +225,6 @@ node_modules/
 
 # 环境变量（包含API密钥）
 .env.agent
+
+# 医生账号信息
+appWeb/doctor_accounts.json

@@ -72,7 +72,7 @@ def main():
         'verbose': True
     }
 
-    print(f"Starting training...")
+    print("Starting training...")
     print(f"Dataset: {args.data}")
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch}")
@@ -82,7 +82,7 @@ def main():
     # 开始训练
     results = model.train(**train_config)
 
-    print(f"\nTraining completed!")
+    print("\nTraining completed!")
     print(f"Best model saved to: runs/detect/{args.name}/weights/best.pt")
     print(f"Last model saved to: runs/detect/{args.name}/weights/last.pt")
 

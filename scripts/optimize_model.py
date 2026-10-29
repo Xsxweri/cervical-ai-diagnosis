@@ -5,11 +5,7 @@ from torch.quantization import quantize_dynamic
 import argparse
 from collections import OrderedDict
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.insert(0, project_root)
-
+# 项目已通过 pip install -e . 安装，项目根由 .pth 提供，无需 sys.path 自举
 from models import CervicalCancerModel
 
 

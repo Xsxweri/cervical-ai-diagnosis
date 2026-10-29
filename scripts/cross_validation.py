@@ -1,21 +1,14 @@
-import sys
 import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
 import argparse
-import yaml
 from tqdm import tqdm
 from sklearn.model_selection import KFold
 import numpy as np
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.insert(0, project_root)
-
-# 导入项目模块
+# 项目已通过 pip install -e . 安装，项目根由 .pth 提供，无需 sys.path 自举
 from utils import load_config
 from models import CervicalCancerModel
 from utils.preprocess import CombinedCervicalCancerDataset, get_transforms
@@ -125,7 +118,10 @@ def cross_validation(config, k_folds=5):
 
     # 获取数据转换
     train_transform = get_transforms(config, 'train')
-    test_transform = get_transforms(config, 'test')
+    # TODO: 验证集当前共用 train_transform（含随机增强），折内指标含噪声、不可复现。
+    #       修复需连同 create_kfold_data_loaders 一起改（需按 split 传入不同 transform），
+    #       属独立课题，改动会影响历史指标可比性，故暂只标注。
+    test_transform = get_transforms(config, 'test')  # noqa: F841
 
     # 创建数据集
     dataset_config = config['data']['datasets']
@@ -180,7 +176,7 @@ def cross_validation(config, k_folds=5):
     mean_acc = np.mean(fold_results)
     std_acc = np.std(fold_results)
 
-    print(f"\n=== Cross Validation Results ===")
+    print("\n=== Cross Validation Results ===")
     print(f"Fold Accuracies: {[f'{acc:.4f}' for acc in fold_results]}")
     print(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
 
@@ -205,8 +201,8 @@ def main():
     result_file = os.path.join(config['paths']['result_dir'], 'cross_validation_results.txt')
 
     with open(result_file, 'w') as f:
-        f.write(f"Cross Validation Results\n")
-        f.write(f"========================\n")
+        f.write("Cross Validation Results\n")
+        f.write("========================\n")
         f.write(f"Fold Accuracies: {[f'{acc:.4f}' for acc in fold_results]}\n")
         f.write(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}\n")
 

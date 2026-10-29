@@ -7,7 +7,6 @@ from slowapi.errors import RateLimitExceeded
 
 # --- 门面：tests/test_unit.py 从 agent_api 导入这些名字 ---
 from api.config import (  # noqa: F401
-    ACCOUNTS_PATH,
     ALLOWED_EXTS,
     ALLOWED_MIME,
     LOG_DIR,
@@ -25,7 +24,7 @@ from api.config import (  # noqa: F401
 from api.lifespan import lifespan
 from api.logging_setup import audit_logger, logger  # noqa: F401
 from api.middleware import cors_headers_for, register_http_middleware
-from api.routes import agent_router, auth_router, vision_router
+from api.routes import accounts_router, agent_router, auth_router, vision_router
 from api.runtime import limiter
 from api.schemas import _agent_payload  # noqa: F401
 from api.security import _requester_id, validate_file_content  # noqa: F401
@@ -53,6 +52,7 @@ register_http_middleware(app)
 
 # ==== 路由注册 ====
 app.include_router(auth_router)
+app.include_router(accounts_router)
 app.include_router(vision_router)
 app.include_router(agent_router)
 

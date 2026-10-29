@@ -3,20 +3,15 @@ YOLOv8 宫颈细胞检测模型评估脚本
 支持: 标准COCO指标(mAP)、异常细胞检测分析、置信度阈值调参、可视化对比
 """
 
-import sys
 import os
 import argparse
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import ClassVar, Dict, List, Optional
 from collections import defaultdict
 import numpy as np
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
-sys.path.insert(0, project_root)
-
+# 项目已通过 pip install -e . 安装，项目根由 .pth 提供，无需 sys.path 自举
 from ultralytics import YOLO
 import cv2
 from utils.label_mapping import (
@@ -32,11 +27,17 @@ class DetectionEvaluator:
     """
 
     # SiPaKMeD 5类细胞定义
-    CLASS_NAMES = {i: name for i, name in enumerate(SIPAKMED_CLASSES)}
+    CLASS_NAMES: ClassVar[Dict[int, str]] = {
+        i: name for i, name in enumerate(SIPAKMED_CLASSES)
+    }
 
     # 医学分类: 异常 vs 正常
-    ABNORMAL_CLASSES = {SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_ABNORMAL_CLASSES}
-    NORMAL_CLASSES = {SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_NORMAL_CLASSES}
+    ABNORMAL_CLASSES: ClassVar[set] = {
+        SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_ABNORMAL_CLASSES
+    }
+    NORMAL_CLASSES: ClassVar[set] = {
+        SIPAKMED_CLASS_TO_IDX[n] for n in SIPAKMED_NORMAL_CLASSES
+    }
 
     def __init__(self, model_path: str, conf: float = 0.001, iou: float = 0.7,deploy_conf: float = 0.25, deploy_iou: float = 0.45):
         """
@@ -76,7 +77,7 @@ class DetectionEvaluator:
         )
 
         results = {
-            'eval_params': {'conf': self.conf, 'iou': self.iou}, 
+            'eval_params': {'conf': self.conf, 'iou': self.iou},
             'mAP50': float(metrics.box.map50),
             'mAP75': float(metrics.box.map75),
             'mAP50_95': float(metrics.box.map),
@@ -109,14 +110,14 @@ class DetectionEvaluator:
             results['per_class'][name] = cls_result
 
         # 打印结果
-        print(f"\n整体指标:")
+        print("\n整体指标:")
         print(f"     mAP@0.5:    {results['mAP50']:.4f}")
         print(f"     mAP@0.75:   {results['mAP75']:.4f}")
         print(f"     mAP@0.5:0.95: {results['mAP50_95']:.4f}")
         print(f"     Precision:  {results['precision']:.4f}")
         print(f"     Recall:     {results['recall']:.4f}")
 
-        print(f"\n  📋 每类指标:")
+        print("\n  📋 每类指标:")
         for name, cls_metrics in results['per_class'].items():
             print(f"{name:20s}: P={cls_metrics['precision']:.4f}, R={cls_metrics['recall']:.4f}, AP50={cls_metrics['AP50']:.4f}")
 
@@ -127,7 +128,7 @@ class DetectionEvaluator:
 
         return results
 
-    def evaluate_abnormal_detection(self, image_dir: str, gt_dir: str = None) -> Dict:
+    def evaluate_abnormal_detection(self, image_dir: str, gt_dir: Optional[str] = None) -> Dict:
         """
         异常细胞检测评估（医学场景专用）
 
@@ -173,7 +174,6 @@ class DetectionEvaluator:
 
             for box in results.boxes:
                 cls_id = int(box.cls)
-                conf = float(box.conf)
                 img_stats['total_cells'] += 1
                 img_stats['class_distribution'][cls_id] += 1
                 total_stats['per_class_counts'][self.CLASS_NAMES.get(cls_id, f'Class_{cls_id}')] += 1
@@ -205,14 +205,14 @@ class DetectionEvaluator:
         print(f"正常细胞: {total_stats['normal_cells']} ({total_stats['normal_ratio']:.2%})")
         print(f"平均每图: {total_stats['avg_cells_per_image']:.1f} 个细胞")
 
-        print(f"\n各类别分布:")
+        print("\n各类别分布:")
         for cls_name, count in sorted(total_stats['per_class_counts'].items()):
             ratio = count / total_stats['total_cells'] if total_stats['total_cells'] > 0 else 0
             print(f"     {cls_name:20s}: {count:4d} ({ratio:.2%})")
 
         return dict(total_stats)
 
-    def evaluate_conf_thresholds(self, data_yaml: str, thresholds: List[float] = None) -> Dict:
+    def evaluate_conf_thresholds(self, data_yaml: str, thresholds: Optional[List[float]] = None) -> Dict:
         """
         置信度阈值调参评估
         """
@@ -365,7 +365,7 @@ def main():
         abnormal_results = evaluator.evaluate_abnormal_detection(args.image_dir)
         all_results['abnormal_detection'] = abnormal_results
     else:
-        print(f"\n 测试图像目录未指定或不存在，跳过异常细胞分析")
+        print("\n 测试图像目录未指定或不存在，跳过异常细胞分析")
 
     # 3. 置信度阈值调参
     if args.tune_conf and args.data and os.path.exists(args.data):

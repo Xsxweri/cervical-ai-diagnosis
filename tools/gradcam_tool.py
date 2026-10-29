@@ -82,6 +82,7 @@ class GradCAMTool:
                 "heatmap_path": str,      # 热力图保存路径
                 "overlay_path": str,      # 叠加图保存路径
                 "attention_analysis": str, # 注意力分布分析
+                # 仅表示"是否集中于裁剪框中心"，不等于"注意力是否落在细胞核上"
                 "is_valid_attention": bool, # 注意力是否合理
                 "confidence": float       # 对该分析的信心
             }
@@ -147,7 +148,6 @@ class GradCAMTool:
             "attention_analysis": analysis,
             "is_valid_attention": is_valid,
             "target_class": target_class,
-            "confidence": 0.85 if is_valid else 0.6
         }
     
     def _generate_heatmap(self, original_image: Image.Image, cam: np.ndarray) -> Image.Image:
@@ -191,13 +191,21 @@ class GradCAMTool:
         
         # 分析
         if center_attention > 0.7:
-            analysis = "模型注意力集中在图像中心区域，符合细胞核通常位于细胞中央的形态学特征，注意力分布合理"
+            analysis = (
+                f"模型注意力集中在裁剪框中心区域（中心区占比 {center_attention:.2f}）"
+            )
             is_valid = True
         elif center_attention > 0.4:
-            analysis = "模型注意力部分分散，部分关注细胞边缘或背景，建议结合形态学Tool复核"
+            analysis = (
+                f"模型注意力较分散(中心区占比 {center_attention:.2f}), "
+                f"部分落在裁剪框边缘，建议结合形态学与镜检复核"
+            )
             is_valid = True
         else:
-            analysis = "警告：模型注意力严重偏离细胞主体，可能关注背景、杂质或伪影，该预测可信度低，必须人工复核"
+            analysis = (
+                f"警告：模型注意力显著偏离裁剪框中心区域（中心区占比 {center_attention:.2f}），"
+                f"可能关注背景或伪影，该预测可信度低，必须人工复核"
+            )
             is_valid = False
         
         # 检查是否有多峰（注意力分散）
