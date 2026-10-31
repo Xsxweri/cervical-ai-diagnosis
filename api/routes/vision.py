@@ -22,6 +22,8 @@ from api.runtime import limiter
 from api.schemas import _error_result
 from api.security import validate_file_content
 from core.auth import verify_token
+from core.task_store import HEARTBEAT_KEY
+from core.redis_client import get_redis_client
 from services.vision_service import (
     ABNORMAL_CONF_THRESHOLD,
     BINARY_WEIGHTS,
@@ -170,7 +172,11 @@ async def health_check():
     返回结果：
       {"status": "ok"}
     """
-    return {"status": "ok"}
+    try:
+        worker_alive = bool(await (await get_redis_client()).exists(HEARTBEAT_KEY))
+    except Exception:
+        worker_alive = False
+    return {"status": "ok", "device": str(DEVICE), "worker": "alive" if worker_alive else "absent"}
 
 
 @router.get(
@@ -182,15 +188,21 @@ async def system_info():
     """返回设备、模型权重路径、阈值与 RAG 可用性。"""
     # 检测知识库可用性
     from Agents.knowledge import UnavailableKnowledgeBase, get_kb
+    from core.db import ping as db_ping
 
     try:
         rag_available = not isinstance(get_kb(), UnavailableKnowledgeBase)
     except RuntimeError:
         # init_kb 尚未完成
         rag_available = False
+
+    db_available = await db_ping()
+    
     return {
         "status": "ok",
         "device": str(DEVICE),
+        "device_note": ("API 进程仅负责快速分析: Agent诊断的CV推理在arq worker中执行"
+        if os.getenv("DIAGNOSIS_MODE", "sync") == "queue" else ""),
         "models": {
             "yolo": YOLO_WEIGHTS,
             "二分类": BINARY_WEIGHTS,
@@ -207,4 +219,5 @@ async def system_info():
             "异常的CONF阈值": ABNORMAL_CONF_THRESHOLD,
         },
         "rag_available": rag_available,
+        "db_available": db_available,
     }
