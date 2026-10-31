@@ -1,0 +1,16 @@
+# Ruff 配置
+#
+# 为什么必须显式声明 select：
+# ruff 0.17 起，未声明 select 时的默认范围包含 I / PL / UP / RUF / BLE / SIM
+# 等扩展规则组（可用 `ruff check --isolated --show-settings` 确认）。
+# 显式声明使检查范围与 ruff 版本解耦 —— 升级 ruff 不会突然冒出新错误。
+#
+# 选择 E4/E7/E9/F 的理由：这是 ruff 长期以来的默认集，全部指向"真能发现 bug"的规则：
+#   E4 → import 相关（E402 等）
+#   E7 → 语法陷阱（E722 裸 except）
+#   E9 → 运行时错误（E901 语法错误）
+#   F  → Pyflakes 全家（F401 未使用、F821 未定义名、F811 重复定义、F841 未使用变量）
+# 不含 E1/E2/E3/E5/W：缩进、空白、行长属格式，会淹没有意义的 diff。
+
+[lint]
+select = ["E4", "E7", "E9", "F", "LOG", "RUF059"]
