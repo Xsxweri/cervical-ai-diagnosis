@@ -19,11 +19,12 @@ from tools.morphology_tool import MorphologyTool
 from utils.label_mapping import (
     BINARY_CLASSES,
     BINARY_ABNORMAL_IDX,
-    is_abnormal_binary,
     NUCLEUS_CLASS_NAME,
+    is_abnormal_binary,
     get_multiclass_classes,
     abnormal_classes_for,
     risk_floor_for,
+    risk_from_severity,
     max_risk,
     dual_conflict_reason,
 )
@@ -579,7 +580,13 @@ def _analyze_pil_image_sync(
             image_uncertainty = 0.0
         
         ratio = abnormal_cells / total_cells if total_cells else 0.0
-        coarse_risk = risk_level_from_ratio(ratio)
+        scope_now = risk_scope_for(total_cells)
+        if scope_now == "case":
+            coarse_risk = risk_level_from_ratio(ratio)
+        else:
+            coarse_risk = risk_from_severity(cells, mgr.multi_label_space)
+            if abnormal_cells:   # 细胞级下限
+                coarse_risk = max_risk(coarse_risk, "medium")
 
         # 严重度下限：单个 CIS / CIN3 不得被"占比低"稀释成 low
         floors = [

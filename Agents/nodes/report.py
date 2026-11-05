@@ -1,11 +1,12 @@
 """节点6-8:报告生成、不可判读终止、无 LLM 结构化摘要。"""
 
 from typing import Any, Dict
-
+import logging
 from langchain_core.prompts import ChatPromptTemplate
 
-from Agents.llm import get_llm
+from Agents.llm import get_report_llm
 from Agents.state import DiagnosisState
+from Agents.evidence import collect_evidence, format_evidence_block
 from Prompts import raw
 from Prompts.clinical_content import (
     RECOMMENDATION_CELL_SCOPE,
@@ -14,7 +15,12 @@ from Prompts.clinical_content import (
     REPORT_FALLBACK,
 )
 from utils.case_evidence import aggregate_case_evidence
+from utils.evidence_ledger import EvidenceLedger
+from utils.report_validator import has_blocker, validate_report
+from utils.trace import traced
+from utils.dual_track import resolve as resolve_dual_track, extract_declared_risk
 
+logger = logging.getLogger(__name__)
 
 async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """生成诊断报告"""
@@ -67,11 +73,20 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     - 说明: 形态学为自动测量，不可靠时不得据此得出形态学结论
 
     不确定性:
-    - 图像级(P90 归一化熵): {(state.get('max_uncertainty') or 0.0):.3f}
+    - 模型不确定性（P90 归一化熵）: {(state.get('model_uncertainty') or 0.0):.3f}
+    - 证据充分性: {(state.get('evidence_sufficiency') if state.get('evidence_sufficiency') is not None else 0.0):.2f}
+      （达标文献 {(state.get('evidence_relevant_count') or 0)} 篇；
+        证据充分性衡量文献是否覆盖争议点，与模型不确定性是两个独立维度，
+        不得互相替代或用一方去解释另一方）
     - 细胞级 max / median: {ev.get('uncertainty_max', 0.0):.3f} / {ev.get('uncertainty_median', 0.0):.3f}
     - 口径: {cv_results.get('uncertainty_metric', 'normalized_entropy')}，聚合 {cv_results.get('uncertainty_aggregation', 'p90')}
     '''
 
+    agent_out = await collect_evidence(state)
+    agent_block = format_evidence_block(agent_out["items"])
+    if agent_block:
+        context = f"{context}\n\n{agent_block}"
+    
     report_prompt = ChatPromptTemplate.from_messages([
         ("system", raw("diagnosis_report_system")),
         ("human", "{context}\n\n请生成面向医生的辅助诊断报告。")
@@ -79,11 +94,11 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     
     try:
-        llm = get_llm()
+        llm = get_report_llm()
         chain = report_prompt | llm
-        response = await chain.ainvoke({"context": context})
+        with traced(state, "generate_report", llm=True):
+            response = await chain.ainvoke({"context": context})
 
-        # 生成建议
         if (state.get("risk_scope") or "cell") == "case":
             recommendations = RECOMMENDATIONS_BY_RISK.get(
                 state.get("risk_level"), RECOMMENDATION_DEFAULT
@@ -91,11 +106,74 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
         else:
             recommendations = RECOMMENDATION_CELL_SCOPE
 
+        # ---- 机械校验 ----
+        ledger = EvidenceLedger.from_knowledge(state.get("retrieved_knowledge") or [])
+        issues = validate_report(
+            response.content,
+            ledger,
+            {
+                "total_cells": cv_results.get("total_cells"),
+                "risk_level": state.get("risk_level"),
+                "conflict_count": cv_results.get("conflict_count"),
+                "review_required": cv_results.get("review_required"),
+                "evidence_sufficiency": state.get("evidence_sufficiency"),
+                "cells": cv_results.get("cells") or [],
+            },
+        )
+
+        # ---- 双轨对比：代码轨 vs LLM 声明轨 ----
+        track = resolve_dual_track(state.get("risk_level") or "", extract_declared_risk(response.content))
+        if track.diverged:
+            logger.warning(
+                "双轨分歧 sess=%s code=%s declared=%s → final=%s",
+                state.get("image_path"), track.code_risk,
+                track.declared_risk, track.final_risk,
+            )
+
+        if has_blocker(issues):
+            # blocker → 回退模板。REPORT_FALLBACK 含"人工镜检复核"，
+            # 能通过自身的 missing_review 检查，不形成回退死循环。
+            return {
+                "diagnosis_report": REPORT_FALLBACK,
+                "draft_report": response.content,
+                "recommendations": recommendations,
+                "review_required": True,
+                "evidence_ledger": ledger.to_json(),
+                "validator_issues": [i.__dict__ for i in issues],
+                "evidence_agent_items": agent_out["items"],
+                "evidence_agent_meta": {
+                    "steps": agent_out["steps"],
+                    "stopped_by": agent_out["stopped_by"],
+                },
+                "final_risk": track.final_risk,
+                "dual_track": {
+                    "code_risk": track.code_risk,
+                    "declared_risk": track.declared_risk,
+                    "diverged": track.diverged,
+                },
+                "current_step": "generate_report",
+                "is_complete": True,
+            }
+
         return {
             "diagnosis_report": response.content,
             "recommendations": recommendations,
+            **({"review_required": True} if track.review_required else {}),
+            "evidence_ledger": ledger.to_json(),
+            "validator_issues": [i.__dict__ for i in issues],
+            "evidence_agent_items": agent_out["items"],
+            "evidence_agent_meta": {
+                "steps": agent_out["steps"],
+                "stopped_by": agent_out["stopped_by"],
+            },
+            "final_risk": track.final_risk,
+            "dual_track": {
+                "code_risk": track.code_risk,
+                "declared_risk": track.declared_risk,
+                "diverged": track.diverged,
+            },
             "current_step": "generate_report",
-            "is_complete": True
+            "is_complete": True,
         }
     except Exception as e:  # 捕获所有异常
         print(f"LLM生成报告失败: {e}")
@@ -130,7 +208,8 @@ def skip_explainable_agent(state: DiagnosisState) -> Dict[str, Any]:
         "\n\n## 结构化摘要\n\n"
         f"- 检出细胞 {ev.get('total', 0)} 个，异常 {ev.get('abnormal_count', 0)} 个\n"
         f"- 分类分布：{'、'.join(f'{k}:{v}' for k, v in sorted(dist.items())) or '无'}\n"
-        f"- 不确定性(P90 归一化熵): {(state.get('max_uncertainty') or 0.0):.3f}\n"
+        f"- 模型不确定性(P90 归一化熵): {(state.get('model_uncertainty') or 0.0):.3f}\n"
+        f"- 证据充分性: {(state.get('evidence_sufficiency') if state.get('evidence_sufficiency') is not None else 0.0):.2f}\n"
         f"- 风险等级：{state.get('risk_level')}(口径 {state.get('risk_scope')})"
     )
     return {

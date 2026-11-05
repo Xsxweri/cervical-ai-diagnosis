@@ -39,4 +39,4 @@ paths:
   result_dir: "outputs/results"
 
 classification:
-  mode: "binary"  # 默认为二分类模式，可选: binary, multiclass
+  mode: "multiclass"  # 默认为多分类模式，可选: binary, multiclass; 二分类时显式 --classification-mode binary

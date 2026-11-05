@@ -146,6 +146,23 @@ def risk_floor_for(cls: str, label_space: str) -> str | None:
     """该类别对病例级风险的下限；无下限返回 None"""
     return _RISK_FLOOR_BY_SPACE.get(label_space, {}).get(cls)
 
+_TIER_TO_RISK: Dict[str, str] = {
+    "nil": "low",
+    "benign": "low",
+    "low": "medium",
+    "high": "high",
+}
+
+def risk_from_severity(cells: list, label_space: str = "") -> str:
+    """
+    细胞级风险计算
+    细胞级风险与病例级风险不同：细胞级风险是按最严重细胞，**不按占比**；病例级风险是按占比。
+    """
+    levels: list = []
+    for c in cells or []:
+        tier = SEVERITY_TIER.get(c.get("final_class") or "") or "nil"
+        levels.append(_TIER_TO_RISK.get(tier, "low"))
+    return max_risk("low", *levels) if levels else "low"
 
 def severity_tier_for(cls: str) -> str | None:
     return SEVERITY_TIER.get(cls)

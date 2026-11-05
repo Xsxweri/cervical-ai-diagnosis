@@ -13,9 +13,10 @@ data:
 model:
   name: "resnet50"
   num_classes: 5
+  label_space: "sipakmed"   # 标签空间herlev或sipakmed
   pretrained: true
   dropout_rate: 0.5
-  model_type: "resnet50"  # 可选: resnet50, resnet101, efficientnet_b0, vit
+  model_type: "resnet50"  # 可选: resnet50, resnet101, efficientnet_b0
   use_attention: false  # 是否使用注意力机制
 
 training:

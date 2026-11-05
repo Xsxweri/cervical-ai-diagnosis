@@ -20,7 +20,8 @@ METRIC_NAME = "normalized_entropy"
 UNCERTAINTY_PERCENTILE = int(os.getenv("UNCERTAINTY_PERCENTILE", "90"))
 CASE_RISK_MIN_CELLS = int(os.getenv("CASE_RISK_MIN_CELLS", "4"))
 MAX_CLARIFICATION_ROUNDS = int(os.getenv("MAX_CLARIFICATION_ROUNDS", "2"))
-
+EVIDENCE_RELEVANT_COS = float(os.getenv("EVIDENCE_RELEVANT_COS", "0.50"))
+EVIDENCE_FULL_COUNT = int(os.getenv("EVIDENCE_FULL_COUNT", "3"))
 
 def risk_scope_for(total_cells: int) -> str:
     """'case'（占比有意义）或 'cell'（细胞级提示）。"""

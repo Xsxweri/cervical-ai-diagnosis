@@ -43,4 +43,4 @@ paths:
   result_dir: "outputs/results"
 
 classification:
-  mode: "binary"  # 关键：二分类模式
+  mode: "multiclass"  # 关键：多分类模式

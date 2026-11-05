@@ -43,14 +43,20 @@ async def persist(
                 conflict_count, grading_conflict_count, dual_conflict_count,
                 total_cells, abnormal_cells, highest_risk, max_uncertainty,
                 report_md, recommendations, references_list,
-                cells_json, knowledge_json, gradcam_path
+                cells_json, knowledge_json, gradcam_path,
+                evidence_json, validator_issues, evidence_sufficiency,
+                final_risk, declared_risk, dual_diverged,
+                agent_items_json, agent_meta_json
             ) VALUES (
                 $1,$2,$3,$4,
                 $5,$6,$7,
                 $8,$9,$10,
                 $11,$12,$13,$14,
                 $15,$16,$17,
-                $18,$19,$20
+                $18,$19,$20,
+                $21,$22,$23,
+                $24,$25,$26,
+                $27,$28
             )
             ON CONFLICT (session_id) DO UPDATE SET
                 risk_level             = EXCLUDED.risk_level,
@@ -64,7 +70,15 @@ async def persist(
                 references_list        = EXCLUDED.references_list,
                 cells_json             = EXCLUDED.cells_json,
                 knowledge_json         = EXCLUDED.knowledge_json,
-                gradcam_path           = EXCLUDED.gradcam_path
+                gradcam_path           = EXCLUDED.gradcam_path,
+                evidence_json          = EXCLUDED.evidence_json,
+                validator_issues       = EXCLUDED.validator_issues,
+                evidence_sufficiency   = EXCLUDED.evidence_sufficiency,
+                final_risk             = EXCLUDED.final_risk,
+                declared_risk          = EXCLUDED.declared_risk,
+                dual_diverged          = EXCLUDED.dual_diverged,
+                agent_items_json       = EXCLUDED.agent_items_json,
+                agent_meta_json        = EXCLUDED.agent_meta_json
             """,
             session_id,
             operator_id,
@@ -72,7 +86,7 @@ async def persist(
             cv.get("label_space") or "sipakmed",
             state.get("risk_level"),
             state.get("risk_scope"),
-            bool(cv.get("review_required")),
+            bool(cv.get("review_required") or state.get("review_required")),
             int(cv.get("conflict_count") or 0),
             int(cv.get("grading_conflict_count") or 0),
             int(cv.get("dual_conflict_count") or 0),
@@ -86,6 +100,16 @@ async def persist(
             _slim_cells(cv.get("cells") or []),
             state.get("retrieved_knowledge") or [],
             state.get("gradcam_path"),
+            state.get("evidence_ledger") or [],
+            state.get("validator_issues") or [],
+            state.get("evidence_sufficiency"),
+            # --- 双轨对比（04_dual_track.sql）---
+            state.get("final_risk") or state.get("risk_level"),
+            (state.get("dual_track") or {}).get("declared_risk"),
+            bool((state.get("dual_track") or {}).get("diverged")),
+            # --- 证据收集 Agent（审计用）---
+            state.get("evidence_agent_items") or [],
+            state.get("evidence_agent_meta") or {},
         )
 
 
@@ -134,6 +158,21 @@ async def load(session_id: str) -> Optional[dict]:
         "recommendations": row["recommendations"] or [],
         "references": row["references_list"] or [],
         "retrieved_knowledge": row["knowledge_json"] or [],
+        "model_uncertainty": row["max_uncertainty"],
+        "evidence_sufficiency": row["evidence_sufficiency"],
+        "evidence_ledger": row["evidence_json"] or [],
+        "validator_issues": row["validator_issues"] or [],
+        # --- 双轨（与 persist 对称）---
+        "final_risk": row["final_risk"],
+        "dual_track": {
+            "code_risk": row["risk_level"],
+            "declared_risk": row["declared_risk"],
+            "diverged": row["dual_diverged"],
+        },
+        # --- Agent 证据 ---
+        "evidence_agent_items": row["agent_items_json"] or [],
+        "evidence_agent_meta": row["agent_meta_json"] or {},
+        
         "gradcam_path": row["gradcam_path"],
         "clarification_rounds": 0,
         "is_complete": True,

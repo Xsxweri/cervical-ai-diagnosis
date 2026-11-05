@@ -53,3 +53,15 @@ class DiagnosisState(TypedDict, total=False):
     current_step: str  #当前步骤标识
     is_complete: bool  #流程是否结束
     error_message: Optional[str]  #错误信息
+
+    model_uncertainty: Optional[float]      # 模型测量值，任何节点不得覆盖
+    evidence_sufficiency: Optional[float]   # 0~1
+    evidence_relevant_count: Optional[int]
+    evidence_mean_cosine: Optional[float]   # 仅诊断展示
+    evidence_ledger: List[Dict[str, Any]]      # 证据账本快照（落 PG 供审计）
+    validator_issues: List[Dict[str, Any]]     # 报告校验问题（落 PG 供统计）
+
+    evidence_agent_items: List[Dict[str, Any]]   # Agent 收集的证据（审计用）
+    evidence_agent_meta: Dict[str, Any]          # steps / stopped_by（诊断用）
+    final_risk: Optional[str]                    # 双轨合并结果（不改 risk_level）
+    dual_track: Dict[str, Any]                   # {code_risk, declared_risk, diverged}

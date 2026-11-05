@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from Agents.state import DiagnosisState
 from utils.uncertainty import (
     MAX_CLARIFICATION_ROUNDS,
+    CASE_RISK_MIN_CELLS,
     UNCERTAINTY_HIGH,
     UNCERTAINTY_MEDIUM,
     risk_level_from_ratio,
@@ -45,6 +46,7 @@ def _decision(
     """
     out: Dict[str, Any] = {
         "max_uncertainty": max_uncertainty,
+        "model_uncertainty": max_uncertainty,
         "needs_clarification": needs_clarification,
         "clarification_rounds": rounds,
         "action": action,
@@ -82,6 +84,26 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
             ),
             **common,
         )
+    
+    # ---- 细胞级 + 高不确定：不追问，直接出证据不足报告 ----
+    # 理由：不确定性来自"细胞数不足"而非"临床信息缺失"。
+    # 追问病史无法让 1 个细胞变成 4 个细胞，医生答完两轮仍是 pending。
+    # 该提示的是"请上传更大视野"，不是"请补充病史"。
+    if scope == "cell" and max_uncertainty > HIGH_UNCERTAINTY:
+        return _decision(
+            action="direct_report",
+            risk_level="pending",
+            scope=scope,
+            reason=(
+                f"仅检出 {total_cells} 个细胞，不确定性 {max_uncertainty:.3f}；"
+                f"细胞级样本追间病史无法改善判读，直接出具证据不足报告"
+            ),
+            error_message=(
+                f"仅检出 {total_cells} 个细胞（少于 {CASE_RISK_MIN_CELLS} 个），"
+                "不足以代表病例整体。建议上传更大视野的图像重新分析，或直接人工镜检。"
+            ),
+            **common,
+        )
 
     # ---- 高不确定性 ----
     if max_uncertainty > HIGH_UNCERTAINTY:
@@ -115,7 +137,7 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
         # 检索更多知识
         return _decision(
             action="deep_retrieve",
-            risk_level="medium",
+            risk_level=cv_result.get("risk_level") or "medium",
             scope=scope,
             reason=f"不确定性 {max_uncertainty:.3f} 仍高，追问已达上限，转为文献检索辅助",
             **common,
@@ -125,7 +147,7 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
     if max_uncertainty > MEDIUM_UNCERTAINTY and not retrieval_done:
         return _decision(
             action="deep_retrieve",
-            risk_level="medium",
+            risk_level=cv_result.get("risk_level") or "medium",
             scope=scope,
             reason=f"不确定性 {max_uncertainty:.3f} 处于中等区间，先检索文献再评估",
             **common,
@@ -133,15 +155,15 @@ def uncertainty_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     # ----  低不确定性（或中不确定性但已检索过）：直接出报告 ----
     abnormal_count = int(cv_result.get("abnormal_cells", 0) or 0)
-    ratio = abnormal_count / total_cells
-    risk = risk_level_from_ratio(ratio)
+    risk = cv_result.get("risk_level") or risk_level_from_ratio(abnormal_count / total_cells if total_cells else 0.0)
     return _decision(
         action="direct_report",
         risk_level=risk,
         scope=scope,
         reason=(
             f"不确定性 {max_uncertainty:.3f} ≤ {MEDIUM_UNCERTAINTY}，"
-            f"直接出报告；异常占比 {ratio:.2f} → {risk}" if max_uncertainty <= MEDIUM_UNCERTAINTY
+            f"直接出报告；采用 CV 风险口径 {risk}" 
+            if max_uncertainty <= MEDIUM_UNCERTAINTY
             else f"已检索文献，不确定性 {max_uncertainty:.3f} 不再降级追问，直接出报告"),
         **common,
     )
