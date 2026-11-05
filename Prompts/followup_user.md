@@ -9,6 +9,7 @@ ${time_location}
 - 检出细胞：${total_cells} 个，其中异常 ${abnormal_cells} 个
 - 分类分布：${class_distribution}
 - 不确定性（P90 归一化熵）：${uncertainty}
+- 证据充分性：${evidence_sufficiency}
 - 文献依据：
 ${knowledge}
 - 报告内容：${report_snippet}

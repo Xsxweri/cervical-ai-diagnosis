@@ -61,7 +61,8 @@ def build_followup_prompt(
         total_cells=n_total,
         abnormal_cells=n_abn,
         class_distribution=dist_text,
-        uncertainty=f"{float(state.get('max_uncertainty') or 0.0):.3f}",
+        uncertainty=f"{float(state.get('model_uncertainty') or 0.0):.3f}",
+        evidence_sufficiency=f"{(state.get('evidence_sufficiency') if state.get('evidence_sufficiency') is not None else 0.0):.2f}",
         knowledge=kb_text,
         user_input=user_input,
     )

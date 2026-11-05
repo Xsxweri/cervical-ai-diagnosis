@@ -9,6 +9,7 @@ from Agents.llm import get_llm
 from Agents.state import DiagnosisState
 from Prompts import raw
 from services.explainability_service import compute_case_gradcam, grad_cam_enabled
+from utils.trace import traced
 
 
 async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
@@ -39,8 +40,11 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     '''
 
     explain_context += f'''
-    3. 不确定性分析: {cv_results.get("uncertainty_metric", "normalized_entropy")}={(state.get("max_uncertainty") or 0.0):.3f}
+    3. 模型不确定性: {cv_results.get("uncertainty_metric", "normalized_entropy")}={(state.get("model_uncertainty") or 0.0):.3f}
     (图像级取 {cv_results.get("uncertainty_aggregation", "p90")} 聚合，范围 0~1, 越大越不确定)
+
+    4. 证据充分性: {(state.get("evidence_sufficiency") if state.get("evidence_sufficiency") is not None else 0.0):.2f}
+    (达标文献 {(state.get("evidence_relevant_count") or 0)} 篇；文献覆盖程度，与模型不确定性独立)
     '''
 
     # 仅当检索到知识时追加医学依据
@@ -83,7 +87,8 @@ async def explainable_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     try:
         llm = get_llm()
         chain = explain_prompt | llm
-        response = await chain.ainvoke({"context": explain_context})
+        with traced(state, "generate_explainable_report", llm=True):
+            response = await chain.ainvoke({"context": explain_context})
         full_report = (state.get("diagnosis_report") or "") + "\n\n## 判读逻辑解释\n\n" + response.content
     except Exception as e:
         print(f"LLM生成可解释性报告失败: {e}")
