@@ -98,7 +98,11 @@ class CervicalCancerModel(nn.Module):
         keys = set(sd.keys())
 
         if any('patch_embed' in k or 'blocks.' in k or 'cls_token' in k for k in keys):
-            return 'vit'
+            raise ValueError(
+                "检测到 ViT 权重，但 CervicalCancerModel 仅支持 "
+                "resnet50 / resnet101 / efficientnet_b0..b7。"
+                "请改用受支持主干的权重，或先实现 ViT 分支。"
+            )
 
         if any(k.startswith('features.') for k in keys):
             w = next((v for k, v in sd.items() if k.endswith('classifier.1.weight')), None)

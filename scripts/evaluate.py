@@ -224,7 +224,7 @@ def main():
                         help='Use Monte Carlo Dropout for uncertainty estimation')
     parser.add_argument('--mc_samples', type=int, default=10,
                         help='Number of Monte Carlo samples for uncertainty estimation')
-    parser.add_argument('--model_type', type=str, default=None,choices=['resnet50', 'resnet101', 'efficientnet_b0', 'vit'],
+    parser.add_argument('--model_type', type=str, default=None,choices=['resnet50', 'resnet101', 'efficientnet_b0'],
                         help='Manually specify model type (auto-detect if not set)')
     parser.add_argument('--attention_type', type=str, default=None,choices=['se', 'cbam', 'none'],
                         help='Manually specify attention type (auto-detect if not set)')

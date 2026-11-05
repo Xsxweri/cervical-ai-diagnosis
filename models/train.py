@@ -382,11 +382,11 @@ def main():
     parser.add_argument('--resume', type=str, help='Path to checkpoint to resume from')
     parser.add_argument('--use_wandb', action='store_true', help='Enable Weights & Biases tracking')
     parser.add_argument('--model_type', type=str, default=None,
-                        choices=['resnet50', 'resnet101', 'efficientnet_b0', 'vit'],
+                        choices=['resnet50', 'resnet101', 'efficientnet_b0'],
                         help='Model type to use (overrides config file)')
-    parser.add_argument('--classification_mode', type=str, default='binary',
+    parser.add_argument('--classification_mode', type=str, default=None,
                         choices=['binary', 'multiclass'],
-                        help='Classification mode: binary (normal/abnormal) or multiclass')
+                        help='Classification mode: None 时读 config["classification"]["mode"],' '再缺省为 binary')
     parser.add_argument('--batch_size', type=int, help='Batch size for training')
     parser.add_argument('--loss_type', type=str, default='cross_entropy',
                         choices=['cross_entropy', 'focal', 'weighted'],
@@ -458,11 +458,30 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device: {device}')
 
+    # 解析分类模式
+    classification_mode = (
+        args.classification_mode
+        or (config.get('classification') or {}).get('mode')
+        or 'binary'
+    )
+    if args.classification_mode is None:
+        logging.info(
+            '未指定 --classification_mode，采用配置值: %s (来自 %s)',
+            classification_mode,
+            'config["classification"]["mode"]' if (config.get('classification') or {}).get('mode')
+            else '默认值',
+        )
+    if classification_mode not in ('binary', 'multiclass'):
+        raise SystemExit(
+            f'config["classification"]["mode"] 非法: {classification_mode!r}，'
+            f'只允许 binary / multiclass'
+        )
+
     # 创建数据加载器
-    train_loader, val_loader, test_loader = create_data_loaders(config, args.classification_mode, args.label_space)
+    train_loader, val_loader, test_loader = create_data_loaders(config, classification_mode, args.label_space)
 
     # 根据分类模式设置类别数量和名称
-    if args.classification_mode == 'binary':
+    if classification_mode == 'binary':
         num_classes = len(BINARY_CLASSES)
         target_names = list(BINARY_CLASSES)
         label_space = None
@@ -567,7 +586,7 @@ def main():
         config=config,
         use_lr_warmup=args.use_lr_warmup,
         scheduler_type=args.scheduler_type,
-        classification_mode=args.classification_mode,
+        classification_mode=classification_mode,
         use_mixup=args.use_mixup,
         mixup_alpha=args.mixup_alpha,
         use_cutmix=args.use_cutmix,
@@ -582,7 +601,7 @@ def main():
     plot_training_curves(
         train_losses, val_losses, val_accuracies,
         os.path.join(config['paths']['result_dir'],
-                     f'training_curves_{args.classification_mode}_{args.experiment_name}.png')
+                     f'training_curves_{classification_mode}_{args.experiment_name}.png')
     )
 
     # 结束Weights & Biases会话
