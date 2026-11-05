@@ -1,6 +1,7 @@
 """节点2-3:主动追问与 interrupt 恢复。"""
 
 from typing import Any, Dict
+import logging
 
 from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
@@ -10,7 +11,9 @@ from Agents.state import DiagnosisState
 from Prompts import render
 from Prompts.clinical_content import CLARIFICATION_FALLBACK_QUESTIONS
 from utils.uncertainty import MAX_CLARIFICATION_ROUNDS
+from utils.trace import traced
 
+logger = logging.getLogger(__name__)
 
 async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
     """高不确定性时主动追问关键信息"""
@@ -27,11 +30,12 @@ async def prepare_clarification_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     try:
         llm = get_llm()
-        structured_llm = llm.with_structured_output(ClarificationResponse)
-        result = await structured_llm.ainvoke(prompt)
+        structured_llm = llm.with_structured_output(ClarificationResponse, method="function_calling")
+        with traced(state, "prepare_clarification", llm=True):
+            result = await structured_llm.ainvoke(prompt)
         questions = result.questions or CLARIFICATION_FALLBACK_QUESTIONS
     except Exception as e:
-        print(f"LLM生成追问问题失败: {e}")
+        logger.warning("LLM 生成追问问题失败，使用 fallback: %s", e)
         questions = CLARIFICATION_FALLBACK_QUESTIONS
     return {
         "clarification_questions": questions,
