@@ -418,6 +418,8 @@ function ReportStep({
     abnormalCells: number | null;
     highestRisk: string | null;
     maxUncertainty: number | null;
+    evidenceSufficiency: number | null;
+    evidenceCount: number | null;
     thresholds: { high: number; medium: number } | null;
     aggregation: string | null;
   };
@@ -624,9 +626,26 @@ function ReportStep({
               {metrics.maxUncertainty != null && (
                 <div className="flex gap-1">
                   <dt className="text-muted">
-                    不确定性 P{metrics.aggregation?.replace('p', '') ?? '90'}
+                    模型不确定性 P{metrics.aggregation?.replace('p', '') ?? '90'}
                   </dt>
                   <dd className="tabular text-ink">{pct(metrics.maxUncertainty)}</dd>
+                </div>
+              )}
+              {metrics.evidenceSufficiency != null && (
+                <div className="flex gap-1" title="达标文献条数 / 满分条数，与模型不确定性是两个独立维度">
+                  <dt className="text-muted">
+                    证据充分性
+                    {metrics.evidenceCount != null && (
+                      <span className="text-muted/70">（{metrics.evidenceCount} 篇）</span>
+                    )}
+                  </dt>
+                  <dd
+                    className={`tabular ${
+                      metrics.evidenceSufficiency < 0.5 ? 'text-eosin' : 'text-ink'
+                    }`}
+                  >
+                    {pct(metrics.evidenceSufficiency)}
+                  </dd>
                 </div>
               )}
               {metrics.highestRisk && (

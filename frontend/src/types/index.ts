@@ -71,6 +71,10 @@ export interface AgentResponse {
   abnormal_cells?: number | null;
   highest_risk?: string | null;
   max_uncertainty?: number | null;
+  model_uncertainty?: number | null;
+  evidence_sufficiency?: number | null;
+  evidence_relevant_count?: number | null;
+  evidence_mean_cosine?: number | null;
   uncertainty_thresholds?: { high: number; medium: number } | null;
   uncertainty_metric?: string | null;
   uncertainty_aggregation?: string | null;

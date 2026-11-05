@@ -46,6 +46,8 @@ export function useDiagnosis() {
     abnormalCells: number | null;
     highestRisk: string | null;
     maxUncertainty: number | null;
+    evidenceSufficiency: number | null;
+    evidenceCount: number | null;
     thresholds: { high: number; medium: number } | null;
     aggregation: string | null;
   }>({
@@ -53,6 +55,8 @@ export function useDiagnosis() {
     abnormalCells: null,
     highestRisk: null,
     maxUncertainty: null,
+    evidenceSufficiency: null,
+    evidenceCount: null,
     thresholds: null,
     aggregation: null,
   });
@@ -103,7 +107,9 @@ export function useDiagnosis() {
         totalCells: res.total_cells ?? null,
         abnormalCells: res.abnormal_cells ?? null,
         highestRisk: res.highest_risk ?? null,
-        maxUncertainty: res.max_uncertainty ?? null,
+        maxUncertainty: res.model_uncertainty ?? res.max_uncertainty ?? null,
+        evidenceSufficiency: res.evidence_sufficiency ?? null,
+        evidenceCount: res.evidence_relevant_count ?? null,
         thresholds: res.uncertainty_thresholds ?? null,
         aggregation: res.uncertainty_aggregation ?? null,
       });
@@ -381,6 +387,8 @@ export function useDiagnosis() {
       abnormalCells: null,
       highestRisk: null,
       maxUncertainty: null,
+      evidenceSufficiency: null,
+      evidenceCount: null,
       thresholds: null,
       aggregation: null,
     });
