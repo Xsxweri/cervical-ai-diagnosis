@@ -361,8 +361,8 @@ curl -X POST http://localhost:8000/api/agent/upload
 YOLO 检测模型训练
 python scripts/train_yolo.py --data configs/sipakmed_yolo.yaml --model yolov8n.pt --epochs 100 --batch 16 --imgsz 640 --name cervical_cell_exp
 
-分类模型训练（基于 configs/*.yaml）
-python models/train.py --config configs/default.yaml
+分类模型训练（基于 configs/*.yaml, ）
+python models/train.py --config configs/default.yaml # 二分类显式指定 --classification_mode binary
 
 评估 / 预测（已注册为命令行入口）
 cervical-evaluate

@@ -103,6 +103,14 @@ async def agent_upload(
     if not file_path.startswith(UPLOAD_DIR):
         raise HTTPException(status_code=400, detail="非法文件路径")
 
+    if diagnosis_mode() == "queue":
+        client = await get_redis_client()
+        if not await client.exists(task_store.HEARTBEAT_KEY):
+            raise HTTPException(
+                status_code=503,
+                detail="诊断服务暂不可用（无可用 worker），请联系信息科",
+            )
+    
     content = await file.read()
     if len(content) > MAX_SINGLE_FILE:
         raise HTTPException(status_code=413, detail="文件超过30MB限制")
@@ -124,7 +132,7 @@ async def agent_upload(
         return _agent_payload(session_id, result)
 
     client = await get_redis_client()
-    if not await client.exists(HEARTBEAT_KEY):
+    if not await client.exists(task_store.HEARTBEAT_KEY):
         raise HTTPException(
             status_code=503, detail="诊断服务暂不可用（无可用 worker），请联系信息科"
         )
@@ -187,6 +195,8 @@ async def agent_task_status(
         if state:
             return {**_session_payload(session_id, state), "task_status": task_store.DONE}
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    
+    _assert_owner(status)
 
     if status["status"] == task_store.FAILED:
         return {
