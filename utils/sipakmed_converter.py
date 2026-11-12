@@ -133,7 +133,7 @@ class SiPaKMeDConverter:
         """
         points = []
         try:
-            with open(dat_path, 'r') as f:
+            with open(dat_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     if ',' in line:
                         x, y = map(float, line.strip().split(','))
@@ -413,7 +413,7 @@ def validate_yolo_dataset(output_root: str) -> Dict:
 
         box_count = 0
         for lbl in lbls:
-            with open(os.path.join(lbl_dir, lbl)) as f:
+            with open(os.path.join(lbl_dir, lbl), encoding='utf-8') as f:
                 for ln, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:

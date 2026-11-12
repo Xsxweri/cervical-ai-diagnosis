@@ -147,7 +147,7 @@ def test_config_matches_class_definitions(tmp_path):
     cfg = str(tmp_path / "data.yaml")
     create_yolo_config(out, cfg, include_nucleus=False)
 
-    with open(cfg) as f:
+    with open(cfg, encoding="utf-8") as f:
         content = f.read()
     for name in SIPAKMED_CLASSES:
         assert name in content
