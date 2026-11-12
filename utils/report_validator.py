@@ -25,7 +25,7 @@ from utils.uncertainty import CASE_RISK_MIN_CELLS
 from utils.dual_track import extract_declared_risk
 
 # 报告里出现的、形如 E1 / C3 / M2 的引用标记
-_CITE_RE = re.compile(r"\b([ECMGH])(\d+)\b")
+_CITE_RE = re.compile(r"\[([ECMGH])(\d+)\]")
 
 # 病例级表述（细胞级证据不得使用）
 _CASE_SUBJECT_RE = re.compile(
@@ -159,11 +159,12 @@ def validate_report(
     risk = ctx.get("risk_level") or ""
 
     # ---- 1) 引用完整性 ----
-    cited = {m.group(0) for m in _CITE_RE.finditer(text)}
+    cited = {f"{m.group(1)}{m.group(2)}" for m in _CITE_RE.finditer(text)}
     if unknown := cited - ledger.ids:
         issues.append(Issue(
             "unknown_citation",
             f"引用了不存在的证据: {sorted(unknown)}（账本内共 {len(ledger.ids)} 条）",
+            severity="warning",
         ))
 
     # ---- 2) 口径：细胞级不得写成病例级 ----
@@ -232,6 +233,16 @@ def validate_report(
             f"报告声明风险等级={declared}，代码判定={risk}；已标记需人工复核",
             severity="warning",
         ))
+
+    # ---- 8) 证据利用率：充分性满分却零引用 ----
+    if suff is not None and float(suff) >= 1.0 and ledger.count("guideline") > 0:
+        if not any(c.startswith("E") for c in cited):
+            issues.append(Issue(
+                "unused_evidence",
+                f"证据充分性 1.00（账本内 {ledger.count('guideline')} 条文献），"
+                f"但报告未引用任何文献编号",
+                severity="warning",
+            ))
 
     return issues
 

@@ -34,6 +34,13 @@ export default function DashboardPage() {
   const [healthError, setHealthError] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const records = useMemo(() => getHistory(), []);
+  const ragText = !health
+    ? ''
+    : !health.rag_available
+      ? ` · 知识库不可用${health.rag_status_reason ? `(${health.rag_status_reason})` : ''}`
+      : health.rag_chunks
+        ? ` · 知识库 ${health.rag_chunks} 条`
+        : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -191,7 +198,7 @@ export default function DashboardPage() {
         ) : health ? (
           <span className="tabular">
             模型已加载 · {health.device}
-            {!health.rag_available && ' · 知识库不可用（本次报告无文献依据）'}
+            {ragText}
           </span>
         ) : (
           <span>正在获取系统状态…</span>
@@ -229,6 +236,16 @@ export default function DashboardPage() {
                 <dt className="text-muted w-24 shrink-0">不确定性采样</dt>
                 <dd>MC Dropout × {health.config.mc_dropout_samples}</dd>
               </div>
+              {health.rag_rewrite_hits?.length ? (
+                <div className="flex gap-2">
+                  <dt className="text-muted w-24 shrink-0">改写命中</dt>
+                  <dd className="text-[11.5px] leading-relaxed">
+                    {health.rag_rewrite_hits
+                      .map((h) => `${h.alias}→${h.target}(${h.hits})`)
+                      .join('、')}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </details>
         )}

@@ -71,7 +71,7 @@ def make_guideline_tool(state: Dict[str, Any]):
         try:
             kb = get_kb()
             # retrieve 接受自由文本，比 retrieve_by_classification 的固定映射更灵活
-            items = await kb.retrieve(query, k=5)
+            items = await kb.retrieve_nl(query, k=5)
         except Exception as e:
             return f"知识库不可用：{e}。请基于已有信息回答，并说明文献未能检索。"
 

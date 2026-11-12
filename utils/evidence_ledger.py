@@ -31,6 +31,7 @@ class EvidenceItem:
     source: str
     score: Optional[float] = None
     reliability: str = "ok"          # ok | low
+    grade: str = ""                  # CEBM 等级标签，如 "I 级 国家指南"
 
 
 @dataclass
@@ -45,12 +46,13 @@ class EvidenceLedger:
         source: str,
         score: Optional[float] = None,
         reliability: str = "ok",
+        grade: str = "",
     ) -> EvidenceItem:
         """追加一条证据并分配 ID。"""
         prefix = _PREFIX.get(kind, "X")
         n = self._seq.get(prefix, 0) + 1
         self._seq[prefix] = n
-        item = EvidenceItem(f"{prefix}{n}", kind, content, source, score, reliability)
+        item = EvidenceItem(f"{prefix}{n}", kind, content, source, score, reliability, grade)
         self.items.append(item)
         return item
 
@@ -73,7 +75,8 @@ class EvidenceLedger:
         if not self.items:
             return "（无外部证据）"
         return "\n\n".join(
-            f"[{i.id}] ({i.kind}, {i.source}) {i.content}" for i in self.items
+            f"[{i.id}] ({i.kind}{', ' + i.grade if i.grade else ''}, {i.source}) {i.content}"
+            for i in self.items
         )
 
     def to_json(self) -> List[dict]:
@@ -112,10 +115,12 @@ class EvidenceLedger:
         """
         led = cls()
         for k in knowledge or []:
+            from utils.evidence_grade import grade_label
             led.add(
                 "guideline",
                 (k.get("content") or "")[:max_chars],
                 f"{(k.get('source') or '未知').split(chr(92))[-1]} p{k.get('page', 0)}",
                 score=k.get("score"),
+                grade=grade_label(k.get("doc_type")),
             )
         return led

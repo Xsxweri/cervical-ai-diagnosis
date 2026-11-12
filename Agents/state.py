@@ -58,6 +58,7 @@ class DiagnosisState(TypedDict, total=False):
     evidence_sufficiency: Optional[float]   # 0~1
     evidence_relevant_count: Optional[int]
     evidence_mean_cosine: Optional[float]   # 仅诊断展示
+    evidence_grades: Dict[str, int]         # 相关文献的证据等级分布 {"I": 2, "III": 1}
     evidence_ledger: List[Dict[str, Any]]      # 证据账本快照（落 PG 供审计）
     validator_issues: List[Dict[str, Any]]     # 报告校验问题（落 PG 供统计）
 

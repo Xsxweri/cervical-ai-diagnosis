@@ -93,7 +93,7 @@ async def test_budget_exceeded_does_not_raise(monkeypatch):
             )
 
     class FakeLLM:
-        def with_structured_output(self, _model):
+        def with_structured_output(self, _model, **_kwargs):
             return FakePlanner()
 
     monkeypatch.setattr(ea, "get_llm", lambda: FakeLLM())
@@ -133,11 +133,12 @@ async def test_agent_does_not_mutate_state(monkeypatch):
             return PlannerOutput(done=True)
 
     class FakeLLM:
-        def with_structured_output(self, _model):
+        def with_structured_output(self, _model, **_kwargs):
             return FakePlanner()
 
     monkeypatch.setattr(ea, "get_llm", lambda: FakeLLM())
-    await ea.collect_evidence(BASE_STATE)
+    out = await ea.collect_evidence(BASE_STATE)
+    assert out["stopped_by"] == "planner_done", out
 
     for k, v in snapshot.items():
         assert BASE_STATE[k] == v, f"字段被改写: {k}"

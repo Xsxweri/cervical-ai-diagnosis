@@ -24,15 +24,16 @@ BASE_CTX = {
 
 
 # ---------------- 引用完整性 ----------------
-
-def test_unknown_citation_blocked():
-    issues = validate_report("根据 E9 可判断为低风险。", _ledger(), BASE_CTX)
-    assert any(i.kind == "unknown_citation" for i in issues)
-    assert has_blocker(issues)
+def test_unknown_citation_is_warning_not_blocker():
+    """编造编号只告警不阻断：格式瑕疵不该让整篇报告退回模板。"""
+    issues = validate_report("根据 [E9] 可判断为低风险。", _ledger(), BASE_CTX)
+    unk = [i for i in issues if i.kind == "unknown_citation"]
+    assert unk and unk[0].severity == "warning"
+    assert not has_blocker(unk)
 
 
 def test_known_citation_passes():
-    issues = validate_report("根据 E1 与 E2，建议随访。", _ledger(), BASE_CTX)
+    issues = validate_report("根据 [E1] 与 [E2]，建议随访。", _ledger(), BASE_CTX)
     assert not any(i.kind == "unknown_citation" for i in issues)
 
 
@@ -100,7 +101,7 @@ def test_undisclosed_insufficiency_is_warning_only():
 # ---------------- 合规报告应通过 ----------------
 
 def test_clean_report_passes():
-    report = "检出 1 个高级别细胞（E1、E2），建议人工镜检复核并 3 个月复查。"
+    report = "检出 1 个高级别细胞（[E1]、[E2]），建议人工镜检复核并 3 个月复查。"
     ctx = {**BASE_CTX, "risk_level": "high", "evidence_sufficiency": 1.0}
     assert validate_report(report, _ledger(), ctx) == []
 
@@ -191,3 +192,19 @@ def test_conclusion_section_still_checked():
     )
     issues = validate_report(report, _ledger(), {**BASE_CTX, "total_cells": 1})
     assert any(i.kind == "scope_violation" and i.severity == "blocker" for i in issues)
+
+def test_hpv_e6_e7_not_treated_as_citation():
+    """回归护栏：HPV E6/E7 是癌基因名，不是引用编号（曾导致误回退模板）。"""
+    report = "HPV E6/E7 蛋白过度表达提示高危型感染，建议人工镜检复核。"
+    ctx = {**BASE_CTX, "risk_level": "high"}
+    issues = validate_report(report, _ledger(), ctx)
+    assert not any(i.kind == "unknown_citation" for i in issues)
+
+
+def test_unused_evidence_warns_when_sufficiency_full():
+    """充分性满分却零引用 → 告警（不阻断）。"""
+    report = "检出 1 个高级别细胞，建议人工镜检复核。"
+    ctx = {**BASE_CTX, "risk_level": "high", "evidence_sufficiency": 1.0}
+    issues = validate_report(report, _ledger(), ctx)
+    unused = [i for i in issues if i.kind == "unused_evidence"]
+    assert unused and unused[0].severity == "warning"

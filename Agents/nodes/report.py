@@ -22,6 +22,18 @@ from utils.dual_track import resolve as resolve_dual_track, extract_declared_ris
 
 logger = logging.getLogger(__name__)
 
+_GRADE_DESC = {"I": "指南/标准", "II": "综述", "III": "原始研究", "V": "未定级"}
+
+
+def _fmt_grades(mix: dict | None) -> str:
+    """{"I": 2, "III": 1} → "2 篇 I 级(指南/标准)、1 篇 III 级(原始研究)" """
+    if not mix:
+        return "无"
+    return "、".join(
+        f"{n} 篇 {lv} 级({_GRADE_DESC.get(lv, '未知')})"
+        for lv, n in sorted(mix.items())
+)
+
 async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     """生成诊断报告"""
     cv_results = state.get("cv_result") or {}
@@ -76,8 +88,11 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     - 模型不确定性（P90 归一化熵）: {(state.get('model_uncertainty') or 0.0):.3f}
     - 证据充分性: {(state.get('evidence_sufficiency') if state.get('evidence_sufficiency') is not None else 0.0):.2f}
       （达标文献 {(state.get('evidence_relevant_count') or 0)} 篇；
+      证据等级分布: {_fmt_grades(state.get("evidence_grades"))}；
         证据充分性衡量文献是否覆盖争议点，与模型不确定性是两个独立维度，
         不得互相替代或用一方去解释另一方）
+      说明: 证据等级按 CEBM 简化标定 —— I 级=指南/标准，II 级=综述，III 级=原始研究。
+        若仅有 III 级支撑，报告中应说明"依据来自原始研究，尚缺乏指南级证据"。
     - 细胞级 max / median: {ev.get('uncertainty_max', 0.0):.3f} / {ev.get('uncertainty_median', 0.0):.3f}
     - 口径: {cv_results.get('uncertainty_metric', 'normalized_entropy')}，聚合 {cv_results.get('uncertainty_aggregation', 'p90')}
     '''
@@ -86,7 +101,13 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
     agent_block = format_evidence_block(agent_out["items"])
     if agent_block:
         context = f"{context}\n\n{agent_block}"
-    
+
+    ledger = EvidenceLedger.from_knowledge(state.get("retrieved_knowledge") or [])
+    if ledger.count("guideline"):
+        context = (
+            f"{context}\n\n## 文献证据（引用时请使用方括号编号，如 [E1]）\n"
+            f"{ledger.as_prompt_block()}"
+        )
     report_prompt = ChatPromptTemplate.from_messages([
         ("system", raw("diagnosis_report_system")),
         ("human", "{context}\n\n请生成面向医生的辅助诊断报告。")
@@ -107,7 +128,6 @@ async def generate_report_agent(state: DiagnosisState) -> Dict[str, Any]:
             recommendations = RECOMMENDATION_CELL_SCOPE
 
         # ---- 机械校验 ----
-        ledger = EvidenceLedger.from_knowledge(state.get("retrieved_knowledge") or [])
         issues = validate_report(
             response.content,
             ledger,

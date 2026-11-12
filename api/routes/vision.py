@@ -38,6 +38,7 @@ from services.vision_service import (
     analyze_pil_image,
 )
 from utils.uncertainty import UNCERTAINTY_HIGH, UNCERTAINTY_MEDIUM
+from utils.query_rewrite import rewrite_stats
 
 router = APIRouter(tags=["vision"])
 
@@ -187,17 +188,12 @@ async def health_check():
 async def system_info():
     """返回设备、模型权重路径、阈值与 RAG 可用性。"""
     # 检测知识库可用性
-    from Agents.knowledge import UnavailableKnowledgeBase, get_kb
+    from Agents.knowledge import kb_status
     from core.db import ping as db_ping
 
-    try:
-        rag_available = not isinstance(get_kb(), UnavailableKnowledgeBase)
-    except RuntimeError:
-        # init_kb 尚未完成
-        rag_available = False
-
+    rag = kb_status()
     db_available = await db_ping()
-    
+
     return {
         "status": "ok",
         "device": str(DEVICE),
@@ -218,6 +214,9 @@ async def system_info():
             "不确定阈值_medium": UNCERTAINTY_MEDIUM,
             "异常的CONF阈值": ABNORMAL_CONF_THRESHOLD,
         },
-        "rag_available": rag_available,
+        "rag_available": rag["available"],
+        "rag_chunks": rag["chunks"],
+        "rag_status_reason": rag["reason"] or None,
+        "rag_rewrite_hits": rewrite_stats(20),
         "db_available": db_available,
     }

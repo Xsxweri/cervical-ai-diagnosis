@@ -120,6 +120,9 @@ export interface SystemInfoResponse {
   };
   /** RAG 是否可用（init_kb 失败时运行期降级为 false） */
   rag_available: boolean;
+  rag_chunks?: number | null;
+  rag_status_reason?: string | null;
+  rag_rewrite_hits?: { alias: string; target: string; hits: number }[];
 }
 
 /** 本地历史记录 */

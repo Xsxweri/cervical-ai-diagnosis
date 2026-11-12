@@ -14,6 +14,9 @@ from utils.uncertainty import (
     risk_scope_for,
 )
 from utils.trace import traced
+from utils.evidence_grade import grade_of
+from utils.retrieval_fusion import distance_to_cosine as _distance_to_cosine
+from utils.retrieval_fusion import dedupe_knowledge
 
 
 async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
@@ -38,7 +41,7 @@ async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
 
     with traced(state, "deep_retrieval"):
         results = await asyncio.gather(*tasks)
-    all_knowledge = [item for sub in results for item in sub]
+    all_knowledge = dedupe_knowledge([item for sub in results for item in sub], sort_by_score=True)
 
     return {
         "retrieved_knowledge": all_knowledge,
@@ -46,13 +49,13 @@ async def deep_retrieval_agent(state: DiagnosisState) -> Dict[str, Any]:
         "current_step": "deep_retrieval"
     }
 
-def _distance_to_cosine(d) -> float:
-    """
-    余弦相似度 = 1 - (欧氏距离^2)/2
-    """
-    dist = max(float(d or 0.0), 0.0)
-    return round(1.0 - (dist * dist) / 2.0, 4)
-
+def _cosine_of(item: dict) -> float:
+    """相关性分值。必须与检索排序保持一致，否则指标会与检索相反。"""
+    for key in ("cos_rank", "cosine"):
+        v = item.get(key)
+        if v is not None:
+            return float(v)
+    return _distance_to_cosine(item.get("score"))
 
 def evidence_sufficiency_from(knowledge: list[dict]) -> tuple[float, int, float]:
     """
@@ -63,12 +66,18 @@ def evidence_sufficiency_from(knowledge: list[dict]) -> tuple[float, int, float]
     if not knowledge:
         return 0.0, 0, 0.0
 
-    cosines = [_distance_to_cosine(k.get("score")) for k in knowledge]
-    relevant = [c for c in cosines if c >= EVIDENCE_RELEVANT_COS]
+    weighted = 0.0
+    cosines: list[float] = []
+    for k in knowledge:
+        c = _cosine_of(k)
+        if c < EVIDENCE_RELEVANT_COS:
+            continue
+        cosines.append(c)
+        weighted += grade_of(k.get("doc_type"))[2]
 
-    sufficiency = min(1.0, len(relevant) / EVIDENCE_FULL_COUNT)
-    mean_cos = round(sum(relevant) / len(relevant), 4) if relevant else 0.0
-    return round(sufficiency, 4), len(relevant), mean_cos
+    sufficiency = min(1.0, weighted / EVIDENCE_FULL_COUNT)
+    mean_cos = round(sum(cosines) / len(cosines), 4) if cosines else 0.0
+    return round(sufficiency, 4), len(cosines), mean_cos
 
 async def post_retrieval_assessment_agent(state: DiagnosisState) -> Dict[str, Any]:
     """
@@ -126,6 +135,7 @@ async def post_retrieval_assessment_agent(state: DiagnosisState) -> Dict[str, An
         "evidence_sufficiency": sufficiency,
         "evidence_relevant_count": n_relevant,
         "evidence_mean_cosine": mean_cos,
+        "evidence_grades": _grade_mix(knowledge),
         "retrieval_done": True,
         "needs_clarification": False,
         "action": "direct_report",
@@ -134,3 +144,13 @@ async def post_retrieval_assessment_agent(state: DiagnosisState) -> Dict[str, An
         "decision_reason": reason,
         "current_step": "post_retrieval_assessment",
     }
+
+def _grade_mix(knowledge: list[dict]) -> dict[str, int]:
+    """相关文献的等级分布，例如 {"I": 2, "III": 1}。供报告展示与审计。"""
+    from collections import Counter
+    mix: Counter = Counter()
+    for k in knowledge:
+        if _cosine_of(k) < EVIDENCE_RELEVANT_COS:
+            continue
+        mix[grade_of(k.get("doc_type"))[0]] += 1
+    return dict(sorted(mix.items()))
