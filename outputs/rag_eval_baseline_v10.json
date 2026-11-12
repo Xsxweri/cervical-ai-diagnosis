@@ -1,0 +1,645 @@
+{
+  "ts": "2026-11-11T15:44:06.701185",
+  "summary": {
+    "chunks": 1777,
+    "cases": 43,
+    "pos_mean_cos": 0.6813,
+    "scored_cases": 42,
+    "pass_rate": 0.9524,
+    "recall": 0.9512,
+    "mrr": 0.8382,
+    "mean_cos": 0.6805,
+    "neg_pass": 1.0,
+    "neg_known_limitation": 1,
+    "corpus_gaps": 0,
+    "corpus_gap_ids": [],
+    "corpus_gap_hit_rate": 0.0,
+    "empty_rate": 0.0
+  },
+  "health": [
+    {
+      "file": "9789240030824-eng.pdf",
+      "chunks": 323
+    },
+    {
+      "file": "9789240124172-eng.pdf",
+      "chunks": 229
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-非肿瘤细胞学变化",
+      "chunks": 151
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-上皮细胞异常-鳞状细胞",
+      "chunks": 120
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-上皮细胞异常-腺上皮细胞",
+      "chunks": 99
+    },
+    {
+      "file": "s41598-025-10009-x.pdf",
+      "chunks": 96
+    },
+    {
+      "file": "lgt-24-132.pdf",
+      "chunks": 92
+    },
+    {
+      "file": "Cancer Cytopathology - 2015 - Nayar - The Pap test and Bethesda 2014",
+      "chunks": 69
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-非典型鳞状细胞",
+      "chunks": 64
+    },
+    {
+      "file": "s41467-025-67215-4.pdf",
+      "chunks": 58
+    },
+    {
+      "file": "子宫颈细胞学bethesda报告系统-标本质量",
+      "chunks": 55
+    },
+    {
+      "file": "C072-Plissiti-icip2018-Athens",
+      "chunks": 48
+    },
+    {
+      "file": "s12885-025-14565-3.pdf",
+      "chunks": 45
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-其他恶性肿瘤",
+      "chunks": 42
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-肛管细胞学",
+      "chunks": 42
+    },
+    {
+      "file": "s42047-026-00222-x.pdf",
+      "chunks": 40
+    },
+    {
+      "file": "s41597-024-03596-3.pdf",
+      "chunks": 39
+    },
+    {
+      "file": "The Bethesda System for reporting cervical cytology.pdf",
+      "chunks": 27
+    },
+    {
+      "file": "中国子宫颈癌筛查指南（二）_李明珠.pdf",
+      "chunks": 25
+    },
+    {
+      "file": "子宫颈癌筛查规范（2025年版）.pdf",
+      "chunks": 25
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-子宫内膜细胞",
+      "chunks": 22
+    },
+    {
+      "file": "中国子宫颈癌筛查指南（一）_李明珠.pdf",
+      "chunks": 17
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-计算机辅助判读以及报告的教育注释和说明",
+      "chunks": 14
+    },
+    {
+      "file": "第五版WHO女性生殖器官肿瘤分类解读_宋艳.pdf",
+      "chunks": 12
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-风险评估及其处理措施",
+      "chunks": 12
+    },
+    {
+      "file": "子宫颈细胞学 Bethesda 报告系统-辅助检测",
+      "chunks": 11
+    }
+  ],
+  "results": [
+    {
+      "ok": true,
+      "cos_max": 0.6898,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "L01",
+      "type": "label",
+      "query": "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7184,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "L02",
+      "type": "label",
+      "query": "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7105,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "C01",
+      "type": "colloquial",
+      "query": "细胞核大了一圈，挤在一起，是癌前病变吗"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7255,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 1,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "C02",
+      "type": "colloquial",
+      "query": "查出来 HPV 阳性，多久复查一次"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6246,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "C03",
+      "type": "colloquial",
+      "query": "空泡细胞，要紧吗"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5692,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "A01",
+      "type": "abbrev",
+      "query": "ASC-US 分流处理"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6976,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "A02",
+      "type": "abbrev",
+      "query": "TCT 与 HPV 联合筛查的敏感性"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5862,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "E01",
+      "type": "english",
+      "query": "LEEP versus conization for CIN treatment outcomes"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7047,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "K01",
+      "type": "clinical",
+      "query": "这个 HSIL 病例需要做锥切吗，切缘阳性怎么办"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5772,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "limit": 0.6813,
+      "known_limitation": true,
+      "known_gap": false,
+      "id": "N01",
+      "type": "negative",
+      "query": "Python 编程教程"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.4658,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "limit": 0.6813,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "N04",
+      "type": "negative",
+      "query": "股票投资策略"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6346,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "T01",
+      "type": "tbs_term",
+      "query": "ASC-US 的定义是什么"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6681,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "T02",
+      "type": "tbs_term",
+      "query": "HSIL 与 LSIL 的形态学区别"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5538,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "T03",
+      "type": "tbs_term",
+      "query": "NILM 包含哪些改变"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7534,
+      "n": 5,
+      "rr": 0.3333,
+      "hit": 2,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "H01",
+      "type": "hard",
+      "query": "HPV 筛查应从多少岁开始"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5907,
+      "n": 5,
+      "rr": 0.2,
+      "hit": 1,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "H02",
+      "type": "hard",
+      "query": "CIN2 与 CIN3 的处理原则有何不同"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5843,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 1,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "H03",
+      "type": "hard",
+      "query": "哪些情况下不需要做阴道镜"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6885,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB01",
+      "type": "label",
+      "query": "宫颈细胞学异常 TBS分类 ASC-US LSIL HSIL 分流处理原则"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6898,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB02",
+      "type": "label",
+      "query": "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6363,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB03",
+      "type": "label",
+      "query": "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6319,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 1,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB04",
+      "type": "label",
+      "query": "重度异型增生 CIN3 HSIL 锥切与随访管理"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.735,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB05",
+      "type": "label",
+      "query": "正常鳞状上皮细胞形态 NILM 筛查间隔 随访建议"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.75,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 2,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB06",
+      "type": "label",
+      "query": "角化不良细胞 胞质角化 核深染 形态学特征 LSIL"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7286,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB07",
+      "type": "label",
+      "query": "挖空细胞 非典型角化 鉴别HSIL与反应性改变"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7374,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB08",
+      "type": "label",
+      "query": "鳞状化生细胞 移行区细胞特征 与HSIL鉴别要点"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6857,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB09",
+      "type": "label",
+      "query": "副基底层细胞 萎缩性阴道炎 低雌激素状态细胞学表现"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7124,
+      "n": 5,
+      "rr": 0.3333,
+      "hit": 2,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB10",
+      "type": "label",
+      "query": "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6957,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 2,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB11",
+      "type": "label",
+      "query": "表层鳞状细胞 正常细胞学 NILM 判读要点"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6783,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB12",
+      "type": "label",
+      "query": "中层鳞状细胞 成熟指数 激素影响判读"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7116,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB13",
+      "type": "label",
+      "query": "颈管柱状细胞 腺上皮细胞 形态学特征 标本质量"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6321,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "LB14",
+      "type": "label",
+      "query": "重度异型增生 CIN3 HSIL 形态学特征 诊断标准"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7396,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R01",
+      "type": "clinical",
+      "query": "宫颈细胞学 LSIL 和 HSIL 与 CIN1、CIN2、CIN3 如何对应"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7203,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R02",
+      "type": "clinical",
+      "query": "宫颈细胞学报告中标本满意度不足应如何处理"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6811,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R03",
+      "type": "clinical",
+      "query": "宫颈细胞学报告中出现滴虫、念珠菌、细菌性阴道病提示什么"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6482,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R04",
+      "type": "clinical",
+      "query": "TCT 提示 LSIL 时首选阴道镜还是随访"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6956,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R05",
+      "type": "clinical",
+      "query": "宫颈细胞学提示 AGC 时应如何进一步检查"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7669,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R06",
+      "type": "clinical",
+      "query": "宫颈细胞学提示腺细胞异常时是否需要评估子宫内膜"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6505,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R07",
+      "type": "clinical",
+      "query": "HPV16/18 阳性但 TCT 正常是否需要阴道镜检查"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.7869,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R08",
+      "type": "clinical",
+      "query": "25–29 岁女性宫颈癌筛查首选细胞学还是 HPV 检测"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.7112,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R09",
+      "type": "clinical",
+      "query": "65 岁以上女性满足什么条件可以停止宫颈癌筛查"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6791,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R10",
+      "type": "clinical",
+      "query": "HIV 感染或免疫抑制人群的宫颈细胞学筛查间隔如何调整"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6498,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R11",
+      "type": "colloquial",
+      "query": "标本没取到颈管细胞，要重取吗"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.6481,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "known_limitation": false,
+      "known_gap": false,
+      "id": "R12",
+      "type": "colloquial",
+      "query": "35 岁 TCT 阴性 HPV52 阳性，查阴道镜还是等一年"
+    }
+  ]
+}

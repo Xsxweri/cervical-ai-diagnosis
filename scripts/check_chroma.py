@@ -18,6 +18,8 @@ async def main():
         items = await kb.retrieve(q, k=5)
         print(f"\n=== {q} ===")
         for i, it in enumerate(items):
-            print(f"  rank={i+1} score={it['score']:.4f}  {it['source']} p{it['page']}")
+            print(f"  rank={i+1} score={it['score']:.4f} cos={it['cosine']:.3f} "
+                  f"rrf={it['rrf']:.5f} by={'+'.join(it['matched_by']) or '-'}  "
+                  f"{it['source']} p{it['page']}")
 
 asyncio.run(main())

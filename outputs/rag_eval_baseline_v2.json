@@ -1,0 +1,209 @@
+{
+  "ts": "2026-11-08T14:53:09.093544",
+  "summary": {
+    "chunks": 1028,
+    "cases": 14,
+    "pass_rate": 0.6429,
+    "recall": 0.75,
+    "mrr": 0.7361,
+    "mean_cos": 0.5764,
+    "neg_pass": 0.0,
+    "empty_rate": 0.0
+  },
+  "health": [
+    {
+      "file": "9789240030824-eng.pdf",
+      "chunks": 323
+    },
+    {
+      "file": "9789240124172-eng.pdf",
+      "chunks": 229
+    },
+    {
+      "file": "s41598-025-10009-x.pdf",
+      "chunks": 96
+    },
+    {
+      "file": "lgt-24-132.pdf",
+      "chunks": 92
+    },
+    {
+      "file": "s41467-025-67215-4.pdf",
+      "chunks": 58
+    },
+    {
+      "file": "s12885-025-14565-3.pdf",
+      "chunks": 45
+    },
+    {
+      "file": "s42047-026-00222-x.pdf",
+      "chunks": 40
+    },
+    {
+      "file": "s41597-024-03596-3.pdf",
+      "chunks": 39
+    },
+    {
+      "file": "The Bethesda System for reporting cervical cytology.pdf",
+      "chunks": 27
+    },
+    {
+      "file": "中国子宫颈癌筛查指南（二）_李明珠.pdf",
+      "chunks": 25
+    },
+    {
+      "file": "子宫颈癌筛查规范（2025年版）.pdf",
+      "chunks": 25
+    },
+    {
+      "file": "中国子宫颈癌筛查指南（一）_李明珠.pdf",
+      "chunks": 17
+    },
+    {
+      "file": "第五版WHO女性生殖器官肿瘤分类解读_宋艳.pdf",
+      "chunks": 12
+    }
+  ],
+  "results": [
+    {
+      "ok": true,
+      "cos_max": 0.6175,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "id": "L01",
+      "type": "label",
+      "query": "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6204,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "id": "L02",
+      "type": "label",
+      "query": "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5708,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 4,
+      "id": "C01",
+      "type": "colloquial",
+      "query": "细胞核大了一圈，挤在一起，是癌前病变吗"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.714,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 3,
+      "id": "C02",
+      "type": "colloquial",
+      "query": "查出来 HPV 阳性，多久复查一次"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5128,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "id": "C03",
+      "type": "colloquial",
+      "query": "空泡细胞，要紧吗"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5663,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "id": "A01",
+      "type": "abbrev",
+      "query": "ASC-US 分流处理"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.6976,
+      "n": 5,
+      "rr": 0.3333,
+      "hit": 2,
+      "id": "A02",
+      "type": "abbrev",
+      "query": "TCT 与 HPV 联合筛查的敏感性"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5637,
+      "n": 5,
+      "rr": 0.5,
+      "hit": 1,
+      "id": "E01",
+      "type": "english",
+      "query": "LEEP versus conization for CIN treatment outcomes"
+    },
+    {
+      "ok": true,
+      "cos_max": 0.5781,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 5,
+      "id": "K01",
+      "type": "clinical",
+      "query": "这个 HSIL 病例需要做锥切吗，切缘阳性怎么办"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.5772,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "id": "N01",
+      "type": "negative",
+      "query": "Python 编程教程"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.4615,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "id": "N04",
+      "type": "negative",
+      "query": "股票投资策略"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.4332,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "id": "T01",
+      "type": "tbs_term",
+      "query": "ASC-US 的定义是什么"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.4883,
+      "n": 5,
+      "rr": 1.0,
+      "hit": 2,
+      "id": "T02",
+      "type": "tbs_term",
+      "query": "HSIL 与 LSIL 的形态学区别"
+    },
+    {
+      "ok": false,
+      "cos_max": 0.5538,
+      "n": 5,
+      "rr": 0.0,
+      "hit": 0,
+      "id": "T03",
+      "type": "tbs_term",
+      "query": "NILM 包含哪些改变"
+    }
+  ]
+}

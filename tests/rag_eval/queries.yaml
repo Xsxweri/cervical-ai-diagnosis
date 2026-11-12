@@ -1,0 +1,351 @@
+# 宫颈细胞学 RAG 检索评测集
+# 标注规范（重要）：
+#   1. is_relevant 使用**严格子串匹配**（不做分词、不做同义扩展），
+#      因此 expect_terms 应写"正文里真实出现的连续字符"。
+#      例：正文写"敏感度高"，标"敏感性"会失败，应标"敏感"。
+#   2. expect_terms 应覆盖目标文献的**实际语言**：
+#      英文语料（Bethesda/WHO/研究论文）用英文原词，中文语料用中文，
+#      跨语言场景中英并列（any 命中即可）。
+#   3. expect_all_terms 只在"答案必然同段出现"时使用（如数值+单位）；
+#      问答型（区别/对比）应使用 expect_terms。
+
+baseline_note: |
+  v6 (2026-11-09): 31 cases / 20 scored / 10 corpus_gaps
+    recall=1.0 mrr=0.8728 neg_pass=1.0 corpus_gap_hit_rate=0.0
+
+  v7 (2026-11-10): 1777 chunks（+13 个 MinerU JSON，含 327 条图注）→ v7.json
+    6 条转正 LB07-LB12；4 条标注错（英文原文/术语变体）待修
+    mrr=0.8439 —— 略降属预期：语料 +73%，top-1 竞争加剧
+
+  v8 (2026-11-10): 全部 14 个 label 用例通过，corpus_gaps=0 → v8.json
+    语料缺口已消除。关键结论：
+      1. TBS 2014 中文译本用「无上皮内病变或恶性病变」而非 NILM 英文原文，
+         用「角化细胞/嗜酸性胞质」而非「角化不良」—— expect_terms 必须
+         匹配语料的**实际表述**，不能照抄英文原文。
+      2. carcinoma_in_situ 是 Herlev 组织学分级名，TBS 2014 已取消 CIS，
+         须映射到 HSIL(CIN3)，且 query 不能带"鳞状细胞癌"（会拉入 SCC 章节）。
+
+  已知排序短板（mrr 贡献者，与语料无关）:
+    H01 HPV 起始年龄    rr=0.33  cos=0.75  ← 语义最像但 top-1 答不上具体年龄
+    H02 CIN2/CIN3 差异  rr=0.20
+    H03 不需阴道镜      rr=0.50
+    → 相关 chunk 已被召回但未排前，需交叉编码器重排
+
+version: 1
+corpus_hint: "Cervical_cytology/*.pdf — 4 篇中文期刊论文 + 7 篇英文原始研究"
+
+cases:
+  # ---- label：来自 CLASSIFICATION_QUERIES ----
+  - id: L01
+    query: "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔"
+    type: label
+    expect_terms: ["CIN1", "随访", "LSIL"]
+    expect_files_any: []
+    min_cos: 0.55
+
+  - id: L02
+    query: "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则"
+    type: label
+    expect_terms: ["阴道镜", "CIN2"]
+    expect_files_any: ["指南", "规范", "WHO", "Bethesda"]
+    min_cos: 0.55
+
+  # ---- colloquial：口语化，验证 rule_rewrite ----
+  - id: C01
+    query: "细胞核大了一圈，挤在一起，是癌前病变吗"
+    type: colloquial
+    expect_terms: ["核增大", "核拥挤", "HSIL", "CIN"]
+    expect_files_any: []
+
+  - id: C02
+    query: "查出来 HPV 阳性，多久复查一次"
+    type: colloquial
+    expect_terms: ["随访", "复查", "HPV"]
+    expect_files_any: ["HPV", "筛查"]
+
+  - id: C03
+    query: "空泡细胞，要紧吗"
+    type: colloquial
+    expect_terms: ["挖空细胞", "HPV"]
+    expect_files_any: []
+
+  # ---- abbrev：拉丁缩写，验证 expand_query ----
+  - id: A01
+    query: "ASC-US 分流处理"
+    type: abbrev
+    expect_terms: ["ASC-US", "不典型", "分流"]
+    expect_files_any: []
+
+  - id: A02
+    query: "TCT 与 HPV 联合筛查的敏感性"
+    type: abbrev
+    expect_terms: ["敏感", "sensitiv", "液基", "Pap", "TCT", "HPV"]
+    expect_files_any: ["筛查", "指南", "规范"]
+
+  # ---- english：跨语言（3 篇英文 PDF）----
+  - id: E01
+    query: "LEEP versus conization for CIN treatment outcomes"
+    type: english
+    expect_terms: ["LEEP", "conization", "CIN", "锥切", "环形电切"]
+    expect_files_any: ["s12885", "s41467", "s42047", "9789240030824"]
+
+  # ---- clinical：医生真实问法 ----
+  - id: K01
+    query: "这个 HSIL 病例需要做锥切吗，切缘阳性怎么办"
+    type: clinical
+    expect_terms: ["锥切", "切缘", "HSIL"]
+    expect_files_any: []
+
+  # ---- negative：无关查询，验证阈值 ----
+  - id: N01
+    query: "Python 编程教程"
+    type: negative
+    known_limitation: true
+
+  - id: N04
+    query: "股票投资策略"
+    type: negative
+    expect_terms: []
+    expect_files_any: []
+
+  - id: T01
+    query: "ASC-US 的定义是什么"
+    type: tbs_term
+    expect_terms:
+      - "atypical squamous cells"
+      - "undetermined significance"
+      - "ASC-US"
+      - "意义未明"
+      - "不典型鳞状细胞"
+    expect_files_any: ["Bethesda"]        # 必须命中综述，而不是英文论文的转述
+
+
+  - id: T02
+    query: "HSIL 与 LSIL 的形态学区别"
+    type: tbs_term
+    expect_terms: ["HSIL", "LSIL", "high-grade", "low-grade"]
+    expect_files_any: ["Bethesda"]
+
+  - id: T03
+    query: "NILM 包含哪些改变"
+    type: tbs_term
+    expect_terms:
+      - "no cellular evidence of neoplasia"
+      - "intraepithelial lesion or malignancy"
+      - "NILM"
+      - "未见上皮内病变"
+      - "反应性"
+    expect_files_any: ["Bethesda"]
+  
+  # ---- hard：需要精确事实，而非"有个词就对" ----
+  - id: H01
+    query: "HPV 筛查应从多少岁开始"
+    type: hard
+    # 必须含具体年龄数字，仅命中 "HPV"/"筛查" 不算答对
+    expect_terms: ["25 岁", "30 岁", "25岁", "30岁", "age 25", "age 30"]
+    expect_files_any: ["指南", "规范", "9789240"]
+
+  - id: H02
+    query: "CIN2 与 CIN3 的处理原则有何不同"
+    type: hard
+    # 区别类问题：答案分散，但必须至少提到两种处理手段
+    expect_terms: ["锥切", "消融", "随访", "LEEP", "conization", "ablation", "Treatment is preferred"]
+    expect_files_any: []
+
+  - id: H03
+    query: "哪些情况下不需要做阴道镜"
+    type: hard
+    # 否定/排除类：余弦对否定语义几乎无感，是会真实失败的场景
+    expect_terms: ["不需要", "不建议", "无需", "not recommended"]
+    expect_files_any: ["指南", "规范"]
+  
+  # ---- label_hard：需要精确事实，而非"有个词就对"，但需要语料支持 ----
+  # L01/L02 与 LB02/LB03 是同一标签，区别：
+  #   L01/L02  无 label 字段 → 走 --mode 指定的入口（默认 retrieve_nl）
+  #   LB02/LB03 有 label 字段 → 永远走生产路径 retrieve_by_classification
+  # 两者对比可回答"查询改写对标签检索是否有增益"
+  # 说明：label 用例的 query 字段仅供阅读，实际检索词由
+  #       utils/label_queries.py 的 CLASSIFICATION_QUERIES 决定。
+  #       改映射后本文件无需同步（但建议保持近似，便于排查）。
+
+  # ---------- 有语料支撑（4）----------
+  - id: LB01
+    label: abnormal
+    query: "宫颈细胞学异常 TBS分类 ASC-US LSIL HSIL 分流处理原则"
+    type: label
+    expect_terms: ["LSIL", "HSIL", "ASC-US", "SCC"]
+    expect_files_any: []
+
+  - id: LB02
+    label: light_dysplastic
+    query: "轻度异型增生 CIN1 LSIL 细胞学特征与随访间隔"
+    type: label
+    # 实测 top-1：规范 p3「（ CIN 1 ） 进展为 HSIL…推荐临床随访」
+    # 注意原文是带空格的 "CIN 1"，"CIN1" 是无空格写法，两者都列
+    expect_terms: ["CIN 1", "CIN1", "LSIL", "随访"]
+    expect_files_any: []
+
+  - id: LB03
+    label: moderate_dysplastic
+    query: "中度异型增生 CIN2 HSIL 阴道镜指征与处理原则"
+    type: label
+    # 实测 top-1：规范 p4「HSIL（CIN 3）首选锥切 / HSIL（CIN 2）建议治疗」
+    # 该 chunk 同时含 CIN2 与 CIN3 —— 对 CIN2 查询是相关的
+    expect_terms: ["CIN 2", "CIN2", "HSIL", "治疗"]
+    expect_files_any: []
+
+  - id: LB04
+    label: severe_dysplastic
+    query: "重度异型增生 CIN3 HSIL 锥切与随访管理"
+    type: label
+    expect_terms: ["CIN 3", "CIN3", "锥切"]
+    expect_files_any: []
+
+  # ---------- 语料缺口（10）：形态学描述在当前语料中不存在 ----------
+  - id: LB05
+    label: normal
+    query: "正常鳞状上皮细胞形态 NILM 筛查间隔 随访建议"
+    type: label
+    expect_terms:
+      - "无上皮内病变或恶性病变"
+      - "成熟鳞状细胞"
+      - "良性"
+    expect_files_any: []
+
+  - id: LB06
+    label: Dyskeratotic
+    query: "角化不良细胞 胞质角化 核深染 形态学特征 LSIL"
+    type: label
+    expect_terms: ["角化细胞", "嗜酸性胞质", "角化胞质", "dyskeratotic"]
+    expect_files_any: []
+
+  - id: LB07
+    label: Koilocytotic
+    query: "挖空细胞 非典型角化 鉴别HSIL与反应性改变"
+    type: label
+    expect_terms: ["挖空", "koilocyt", "空晕"]
+    expect_files_any: []
+
+  - id: LB08
+    label: Metaplastic
+    query: "鳞状化生细胞 移行区细胞特征 与HSIL鉴别要点"
+    type: label
+    expect_terms: ["鳞状化生", "metaplastic", "移行区"]
+    expect_files_any: []
+
+  - id: LB09
+    label: Parabasal
+    query: "副基底层细胞 萎缩性阴道炎 低雌激素状态细胞学表现"
+    type: label
+    expect_terms: ["副基底", "parabasal", "萎缩"]
+    expect_files_any: []
+
+  - id: LB10
+    label: Superficial-Intermediate
+    query: "表层及中层鳞状上皮细胞 成熟指数评估 激素水平判读"
+    type: label
+    expect_terms: ["成熟指数", "表层细胞", "intermediate cell"]
+    expect_files_any: []
+
+  - id: LB11
+    label: normal_superficial
+    query: "表层鳞状细胞 正常细胞学 NILM 判读要点"
+    type: label
+    expect_terms: ["表层", "superficial cell"]
+    expect_files_any: []
+
+  - id: LB12
+    label: normal_intermediate
+    query: "中层鳞状细胞 成熟指数 激素影响判读"
+    type: label
+    expect_terms: ["中层", "intermediate cell", "成熟指数"]
+    expect_files_any: []
+
+  - id: LB13
+    label: normal_columnar
+    query: "颈管柱状细胞 腺上皮细胞 形态学特征 标本质量"
+    type: label
+    expect_terms: ["子宫颈管", "移行区成分", "柱状细胞", "直肠柱状"]
+    expect_files_any: []
+
+  - id: LB14
+    label: carcinoma_in_situ
+    query: "重度异型增生 CIN3 HSIL 形态学特征 诊断标准"
+    type: label
+    # TBS 2014 已取消「原位癌/CIS」术语 → 归入 HSIL(CIN3)。
+    # Herlev 的 carcinoma_in_situ 在细胞学体系中映射到 HSIL，
+    # query 已移除"鳞状细胞癌"（否则会把 SCC 章节拉进来）。
+    expect_terms: ["高级别鳞状上皮内病变", "HSIL", "CIN 3", "CIN3"]
+    expect_files_any: []
+
+  # ---------- 真实临床问法 ----------
+  # ---- 术语与报告结构 ----
+  - id: R01
+    query: "宫颈细胞学 LSIL 和 HSIL 与 CIN1、CIN2、CIN3 如何对应"
+    type: clinical
+    expect_terms: ["CIN 3", "CIN3", "HSIL", "二级分类"]
+
+  - id: R02
+    query: "宫颈细胞学报告中标本满意度不足应如何处理"
+    type: clinical
+    expect_terms: ["不满意", "标本质量", "重复细胞学"]
+
+  - id: R03
+    query: "宫颈细胞学报告中出现滴虫、念珠菌、细菌性阴道病提示什么"
+    type: clinical
+    expect_terms: ["滴虫", "念珠菌", "细菌性阴道病"]
+
+  # ---- 异常结果分流 ----
+  - id: R04
+    query: "TCT 提示 LSIL 时首选阴道镜还是随访"
+    type: clinical
+    expect_terms: ["LSIL", "临床随访", "间隔 1 年"]
+
+  - id: R05
+    query: "宫颈细胞学提示 AGC 时应如何进一步检查"
+    type: clinical
+    expect_terms: ["AGC", "ECC", "搔刮", "子宫内膜活检"]
+
+  - id: R06
+    query: "宫颈细胞学提示腺细胞异常时是否需要评估子宫内膜"
+    type: clinical
+    expect_terms: ["子宫内膜", "组织学检查", "绝经"]
+
+  - id: R07
+    query: "HPV16/18 阳性但 TCT 正常是否需要阴道镜检查"
+    type: clinical
+    expect_terms: ["HPV 16", "HPV16", "16 / 18", "16/18"]
+
+  # ---- 筛查策略与随访 ----
+  - id: R08
+    query: "25–29 岁女性宫颈癌筛查首选细胞学还是 HPV 检测"
+    type: clinical
+    expect_terms:
+      - "25~64"
+      - "25~29"
+      - "推荐细胞学筛查"
+      - "每 5 年"
+    expect_files_any: []
+
+  - id: R09
+    query: "65 岁以上女性满足什么条件可以停止宫颈癌筛查"
+    type: clinical
+    expect_terms: ["不需要继续筛查", "连续 3 次", "≥ 65 岁"]
+
+  - id: R10
+    query: "HIV 感染或免疫抑制人群的宫颈细胞学筛查间隔如何调整"
+    type: clinical
+    expect_terms: ["HIV", "免疫缺陷", "免疫抑制", "缩短筛查间隔"]
+
+  # ---- 口语版对照（同一问题，非书面表述）----
+  #   目的：正式问法测「语料覆盖度」，口语版测「rule_rewrite 改写能力」。
+  #   若口语版失败而正式版通过 → 改写层是短板，优先级高于检索层。
+  - id: R11
+    query: "标本没取到颈管细胞，要重取吗"
+    type: colloquial
+    expect_terms: ["移行区", "子宫颈管", "重复细胞学"]
+
+  - id: R12
+    query: "35 岁 TCT 阴性 HPV52 阳性，查阴道镜还是等一年"
+    type: colloquial
+    expect_terms: ["非 HPV 16", "非HPV16", "12个月后复查"]

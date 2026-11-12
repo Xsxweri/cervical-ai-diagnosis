@@ -13,7 +13,10 @@
 - **结论冲突检测**：二分类判异常而分级模型归为非异常类时标记 `review_required`，报告显式提示人工镜检复核，且冲突细胞**仍计入异常计数**（避免因剔除而低估风险）。
 - **不确定性感知决策**：基于 MC Dropout 多次前向传播估计预测方差，按阈值分级路由（直接报告 / 深度检索 / 主动追问）。
 - **LangGraph 状态机 + 人在回路**：高不确定性时通过 `interrupt` 暂停图执行，等待医生补充信息后 `Command(resume=...)` 恢复。
-- **RAG 知识增强**：Chroma 向量库 + `BAAI/bge-m3` 嵌入，对 `Cervical_cytology/` 下的 PDF 文献进行切分检索，为诊断提供医学依据与参考文献。
+- **RAG 知识增强**：Chroma 向量库 + `BAAI/bge-m3` 嵌入，**向量 + BM25 混合检索**（RRF 融合、按文档权威性加权）。
+语料支持 **MinerU 版面感知解析**（保留章节结构、表格与**图注**）与 PDF 回退；查询侧有**术语归一 + 意图规则 + 多查询扩展**。
+检索结果按 **CEBM 证据等级**（I 指南 / II 综述 / III 原始研究）加权计算「证据充分性」。
+质量基线见 `outputs/rag_eval_baseline_vN.json`，架构与决策见 `docs/RAG.md`。
 - **可解释性报告**：结合形态学特征（核质比、圆形度）、不确定性来源与文献引用，生成面向医生的诊断逻辑解释。
 - **会话与报告分离存储**：Redis 存进行中会话（TTL 1 天）+ LangGraph Checkpointer；PostgreSQL 存账号与已完成报告（永久），Redis 过期后自动回填，不会 404。
 - **长任务队列**：`/api/agent/upload` 经 **arq**（Redis 队列）异步执行，返回 `202 + session_id`，前端轮询 `/api/agent/task/{id}`，规避 120s 超时。
@@ -91,7 +94,7 @@ Cervix-Cytology-AI-System/
 │ └── state.py # DiagnosisState 状态定义 (TypedDict)
 ├── services/
 │ ├── vision_service.py # YOLO + ResNet 双模型推理 + MC Dropout + 形态学
-│ └── rag_service.py # Chroma 向量知识库与检索
+│ └── rag_service.py # 检索编排（Chroma / 混合检索 / 多查询 / 权威性加权）
 ├── core/
 │ ├── auth.py # JWT 生成/校验
 │ ├── db.py # asyncpg 连接池 + jsonb 编解码
@@ -111,13 +114,16 @@ Cervix-Cytology-AI-System/
 ├── models/ # 分类模型定义与训练脚本
 ├── Prompts/ # 提示词模板 (.md) 与临床内容常量
 ├── configs/ # 训练/模型 YAML 配置
+| ├── rag_terms.yaml            # 查询改写：术语白名单 + alias + 意图规则
+| ├── corpus_manifest.yaml      # 语料清单：doc_type 权威性标注
+| ├── default.yaml              # 训练配置
+| └── ...                       # 其他模型配置
 ├── scripts/ # 训练、评估、预测、蒸馏等脚本
 ├── tools/ # Grad-CAM、形态学工具
 ├── utils/ # 数据加载、增强、预处理、可视化
 ├── frontend/ # React + TypeScript + Vite 前端
-├── Cervical_cytology/ # 医学文献 PDF（RAG 数据源）
-├── knowledge_db/ # Chroma 持久化向量库
-├── data/ # Herlev / Sipakmed 数据集
+├── Cervical_cytology/ # RAG 语料：PDF + MinerU JSON（后者保留版面/图注），gitignore
+├── knowledge_db/ 运行时产物（Chroma + kb_manifest.json），gitignore
 ├── runs/, outputs/ # 训练产物、模型权重、评估结果
 └── tests/ # pytest 单元与接口测试
 ```
@@ -386,6 +392,22 @@ pytest tests/test_unit.py # 单元测试
 pytest tests/test_clarify.py # 澄清流程测试
 ```
 > 配置见 `pytest.ini`；已禁用 `faulthandler` 以屏蔽 Windows 下的良性 AV 噪声。
+
+---
+
+### RAG 语料维护
+
+换语料或改解析逻辑后，按此流程操作：
+
+1. 语料放入 `Cervical_cytology/`，**同步更新 `corpus_manifest.yaml`**
+   （`file` 值 = MinerU JSON 去掉 `MinerU_` 前缀与 `__时间戳` 后缀，**不含 `.pdf`**）
+2. **`python scripts/check_manifest.py`** —— 必须输出 ✅，否则 `doc_type` 会静默降级为 `research`
+3. 重建知识库（或重启服务）：日志应见 `[RAG] doc_type 已标注 N/N`
+4. **`python scripts/_diag_after_rebuild.py`** —— 检查图注数与页眉噪声
+5. **`python scripts/eval_retrieval.py --json outputs/rag_eval_baseline_vN.json`** —— 与上一版基线对比
+
+> 改切分/清洗代码时需手动 `CORPUS_VERSION += 1`（指纹不含代码逻辑，否则不会重建）。
+> 架构决策与踩坑记录见 **`docs/RAG.md`**。
 
 ---
 
