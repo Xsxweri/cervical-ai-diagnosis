@@ -163,8 +163,9 @@ uploads/
 !uploads/.gitkeep
 
 # 项目特定：评估与推理输出
-outputs/
+outputs/*
 !outputs/.gitkeep
+!outputs/rag_eval_*.json
 
 # 评估结果文件
 **/detection_evaluation.json

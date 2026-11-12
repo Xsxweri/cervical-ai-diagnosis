@@ -1,0 +1,217 @@
+# 语料权威性清单。修改后必须把 CORPUS_VERSION +1，否则不会重建。
+version: 3
+docs:
+  # === 综述/术语体系 ===
+  - file: The Bethesda System for reporting cervical cytology.pdf
+    doc_type: review
+    role: terminology          # TBS 术语体系定义来源
+    lang: en
+    year: 2022
+    journal: CytoJournal
+    volume: 19
+    article: 28
+    doi: "10.25259/CMAS_03_07_2021"
+    authors: "Pangarkar MA"
+    title: "The Bethesda System for reporting cervical cytology"
+
+  # === 国家/组织指南 ===
+  - file: 9789240030824-eng.pdf
+    doc_type: intl_guideline
+    role: recommendation        # 临床推荐
+    lang: en
+    year: 2021
+    journal: World Health Organization
+    isbn: "978-92-4-003082-4"
+    title: "WHO guideline for screening and treatment of cervical pre-cancer lesions for cervical cancer prevention (2nd ed.)"
+
+  - file: 9789240124172-eng.pdf
+    doc_type: intl_guideline
+    role: implementation        # 实施指南
+    lang: en
+    year: 2025
+    journal: World Health Organization
+    isbn: "978-92-4-012417-2"
+    title: "Evidence-informed guidance for the implementation of HPV-based cervical cancer screening programmes"
+
+  # === 中国指南 ===
+  - file: 中国子宫颈癌筛查指南（一）_李明珠
+    doc_type: national_guideline
+    role: recommendation          # 筛查策略与方案
+    lang: zh
+    year: 2023
+    journal: "中国妇产科临床杂志"
+    volume: 24
+    issue: 4
+    pages: "437-442"
+    title: "中国子宫颈癌筛查指南（一）"
+    authors: "李明珠, 魏丽惠, 马丁, 丛青, 吴鹏, 黄晓园, 赵方辉, 王临虹, 张瑜, 孙蓬明, 隋龙, 孔北华, 陈飞, 吴瑞芳, 向阳, 徐海苗, 尤志学, 赵澄泉, 赵超, 赵昀, 张瑜, 郑文新, 李双, 刘军, 沈丹华, 宋坤, 王建六, 王新宇, 汪辉"
+
+  - file: 中国子宫颈癌筛查指南（二）_李明珠
+    doc_type: national_guideline
+    role: recommendation          # 筛查异常分流与管理
+    lang: zh
+    year: 2025
+    journal: "中国妇产科临床杂志"
+    volume: 26
+    issue: 1
+    pages: "88-96"
+    title: "中国子宫颈癌筛查指南（二）"
+    authors: "李明珠, 魏丽惠, 马丁, 丛青, 吴鹏, 黄晓园, 赵方辉, 王临虹, 张瑜, 孙蓬明, 隋龙, 孔北华, 陈飞, 吴瑞芳, 向阳, 徐海苗, 尤志学, 赵澄泉, 赵超, 赵昀, 张瑜, 郑文新, 李双, 刘军, 沈丹华, 宋坤, 王建六, 王新宇, 汪辉"
+
+  - file: 子宫颈癌筛查规范（2025年版）
+    doc_type: national_guideline
+    role: implementation          # 筛查实施规范
+    lang: zh
+    year: 2025
+    journal: "中国实用妇科与产科杂志"
+    volume: 41
+    issue: 3
+    title: "子宫颈癌筛查规范（2025年版）"
+    authors: "李隆玉, 张红平, 张燕, 敖梅红, 张雪玉, 涂开家, 马全富, 王琦, 毛林, 田训, 刘瑞"
+
+  - file: 第五版WHO女性生殖器官肿瘤分类解读_宋艳
+    doc_type: review
+    role: terminology             # WHO术语分类解读
+    lang: zh
+    year: 2021
+    journal: "中华病理学杂志"
+    doi: "10.3969/j.issn.1007-8096.2021.01.001"
+    title: "第五版WHO女性生殖器官肿瘤分类解读"
+    authors: "宋艳, 刘爱军"
+
+  # === 研究论文 ===
+  - file: lgt-24-132.pdf
+    doc_type: research
+    lang: en
+    year: 2024
+    journal: "Journal of Lower Genital Tract Disease"
+    authors: "Egemen D, Cheung LC, Chen X, Demarco M, Perkins RB, Kinney W, Poitras N, Locke A, Guido RS, Wiser AL, Gage JC, Katki HA, Wentzensen N, Castle PE, Schiffman M, Lorey TS"
+    title: "Risk Estimates Supporting the 2019 ASCCP Risk-Based Management Consensus Guidelines"
+
+  - file: s12885-025-14565-3.pdf
+    doc_type: research
+    lang: en
+    year: 2025
+    journal: BMC Cancer
+    volume: 25
+    article: 1238
+    doi: "10.1186/s12885-025-14565-3"
+    authors: "Yao X, Qie M, Kang L, Li M, Liu Q, Liang X, Liao G"
+    title: "Risk factors for a final diagnosis of cervical cancer in patients initially diagnosed with high-grade cervical intraepithelial neoplasia: a retrospective study"
+
+  - file: s41467-025-67215-4.pdf
+    doc_type: research
+    lang: en
+    year: 2025
+    journal: Nature Communications
+    doi: "10.1038/s41467-025-67215-4"
+    authors: "Yin J, Zhang S, Wang S, Li Z, Zhang X, Pan Q, Chen W, Luo X, Cheng X, Kong B, Sun X, Zhao F, Qiao Y"
+    title: "Age-specific clinical performance of HPV-based vs. cytology-based cervical cancer screening in China"
+
+  - file: s41597-024-03596-3.pdf
+    doc_type: research
+    lang: en
+    year: 2024
+    journal: Scientific Data
+    volume: 11
+    article: 743
+    doi: "10.1038/s41597-024-03596-3"
+    authors: "Kupas D, Hajdu A, Kovacs I, Hargitai Z, Szombathy Z, Harangi B"
+    title: "Annotated Pap cell images and smear slices for cell classification (APACC dataset)"
+
+  - file: s41598-025-10009-x.pdf
+    doc_type: research
+    lang: en
+    year: 2025
+    journal: Scientific Reports
+    volume: 15
+    article: 23936
+    doi: "10.1038/s41598-025-10009-x"
+    authors: "Austin R, Parvathi R"
+    title: "CNN based method for classifying cervical cancer cells in pap smear images"
+
+  - file: s42047-026-00222-x.pdf
+    doc_type: research
+    lang: en
+    year: 2026
+    journal: Surgical and Experimental Pathology
+    volume: 9
+    article: 8
+    doi: "10.1186/s42047-026-00222-x"
+    authors: "da Silva AL, et al."
+    title: "Artificial intelligence in cervical cytology: a systematic review of diagnostic performance and methodological limitations"
+  
+    # === Bethesda 报告系统（MinerU 逐章解析，2026-11 新增）===
+  # file 必须与 source_name_from() 输出逐字一致（含空格与大小写）
+  - file: Cancer Cytopathology - 2015 - Nayar - The Pap test and Bethesda 2014
+    doc_type: standard          # TBS 2014 官方定义论文，术语权威性最高
+    role: terminology
+    lang: en
+    year: 2015
+    journal: Cancer Cytopathology
+
+  - file: C072-Plissiti-icip2018-Athens
+    doc_type: research
+    role: methodology
+    lang: en
+    year: 2018
+
+  - file: 子宫颈细胞学bethesda报告系统-标本质量
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-非肿瘤细胞学变化
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-辅助检测
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-子宫内膜细胞
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-肛管细胞学
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-非典型鳞状细胞
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-上皮细胞异常-鳞状细胞
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-上皮细胞异常-腺上皮细胞
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-其他恶性肿瘤
+    doc_type: standard
+    role: terminology
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-风险评估及其处理措施
+    doc_type: standard
+    role: management
+    lang: zh
+  - file: 子宫颈细胞学 Bethesda 报告系统-计算机辅助判读以及报告的教育注释和说明
+    doc_type: standard
+    role: terminology
+    lang: zh
+
+  # === 国际指南（续）===
+  - file: lgt-24-102
+    doc_type: intl_guideline      # ASCCP 共识指南本体，I 级
+    role: recommendation
+    lang: en
+    year: 2020
+    journal: "Journal of Lower Genital Tract Disease"
+    title: "2019 ASCCP Risk-Based Management Consensus Guidelines for Abnormal Cervical Cancer Screening Tests and Cancer Precursors"
+
+  # === 专家共识 ===
+  - file: 妇科常见恶性肿瘤全专结合管理专家共识_首都医科大学肿瘤学系妇科肿瘤学组
+    doc_type: national_guideline    # 国内专家共识，按 I 级处理
+    role: management
+    lang: zh
